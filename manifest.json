@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "השוואת עגלות סופר",
+  "version": "2.0",
+  "description": "תוסף שמשווה את עגלת הקניות שלך מול רשתות מתחרות",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "פתח השוואת עגלות"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.rami-levy.co.il/*",
+    "*://*.victoryonline.co.il/*",
+    "*://firestore.googleapis.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["prices.json", "substitutes.json"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.rami-levy.co.il/*"],
+      "js": ["rami_levy_injector.js"]
+    },
+    {
+      "matches": ["*://*.victoryonline.co.il/*"],
+      "js": ["victory_injector.js"]
+    }
+  ]
+}

@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>השוואת עגלות סופר</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            width: 340px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f0f2f5;
+            direction: rtl;
+        }
+
+        /* ===== HEADER ===== */
+        .header {
+            background: white;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #eee;
+        }
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .header-brand .brand-icon { font-size: 22px; }
+        .header-brand .brand-name {
+            font-size: 16px;
+            font-weight: 700;
+            color: #111827;
+        }
+        /* Store selector button */
+        .header-settings {
+            border-radius: 8px;
+            background: #f3f4f6;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            color: #374151;
+            border: 1px solid #e5e7eb;
+            cursor: pointer;
+            transition: background 0.15s;
+            padding: 6px 10px;
+            white-space: nowrap;
+        }
+        .header-settings:hover { background: #e5e7eb; }
+
+        /* ===== STORE SELECTOR PANEL ===== */
+        #storePanel {
+            display: none;
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 12px 16px;
+        }
+        #storePanel.open { display: block; }
+
+        .store-panel-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 10px;
+        }
+
+        .store-toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        .store-toggle-row:last-child { border-bottom: none; }
+
+        .store-toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+        }
+        .store-toggle-label .store-emoji { font-size: 18px; }
+
+        /* Toggle switch */
+        .toggle-switch {
+            position: relative;
+            width: 40px;
+            height: 22px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0; height: 0;
+        }
+        .toggle-track {
+            position: absolute;
+            inset: 0;
+            border-radius: 22px;
+            background: #d1d5db;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .toggle-track::before {
+            content: '';
+            position: absolute;
+            height: 16px; width: 16px;
+            right: 3px; top: 3px;
+            border-radius: 50%;
+            background: white;
+            transition: transform 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .toggle-switch input:checked + .toggle-track {
+            background: #16a34a;
+        }
+        .toggle-switch input:checked + .toggle-track::before {
+            transform: translateX(-18px);
+        }
+        .toggle-switch input:disabled + .toggle-track {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .store-note {
+            font-size: 10px;
+            color: #9ca3af;
+            margin-top: 2px;
+        }
+
+        /* ===== COMPARE BUTTON ===== */
+        #compareBtn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: calc(100% - 32px);
+            margin: 14px 16px 0;
+            padding: 13px;
+            background: linear-gradient(135deg, #1a7340, #2ea84a);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 3px 12px rgba(46, 125, 50, 0.35);
+            transition: all 0.2s;
+        }
+        #compareBtn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 16px rgba(46, 125, 50, 0.45);
+        }
+        #compareBtn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* ===== STATUS ===== */
+        #status {
+            text-align: center;
+            font-size: 13px;
+            color: #1565c0;
+            font-weight: 500;
+            min-height: 24px;
+            padding: 8px 16px 0;
+        }
+
+        /* ===== MAIN CONTENT ===== */
+        #result {
+            padding: 12px 16px 16px;
+        }
+
+        /* ===== LIVE HEADER ===== */
+        .live-header { margin-bottom: 12px; }
+        .live-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: #dcfce7;
+            color: #15803d;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 20px;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .live-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: #16a34a;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .comparison-title {
+            font-size: 21px;
+            font-weight: 800;
+            color: #111827;
+            line-height: 1.2;
+            margin-bottom: 4px;
+        }
+        .comparison-subtitle {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        /* ===== STORE CARDS ===== */
+        .store-card {
+            background: white;
+            border: 1.5px solid #e5e7eb;
+            border-radius: 16px;
+            padding: 14px;
+            margin-bottom: 10px;
+            position: relative;
+            transition: box-shadow 0.2s;
+        }
+        .store-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        .store-card.cheapest {
+            border-color: #f59e0b;
+            border-width: 2px;
+        }
+        .cheapest-badge {
+            position: absolute;
+            top: -11px;
+            left: 14px;
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 11px;
+            border-radius: 20px;
+            letter-spacing: 0.4px;
+        }
+        .store-top-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .store-name {
+            font-size: 17px;
+            font-weight: 700;
+            color: #111827;
+        }
+        .guarantee-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            background: #dcfce7;
+            color: #15803d;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 10px;
+            margin-top: 4px;
+            letter-spacing: 0.2px;
+        }
+        .store-price-block { text-align: left; }
+        .store-price {
+            font-size: 22px;
+            font-weight: 800;
+            color: #111827;
+            font-variant-numeric: tabular-nums;
+            line-height: 1;
+        }
+        .store-price-sym { font-size: 14px; font-weight: 600; }
+        .store-bottom-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 8px;
+        }
+        .store-info {
+            font-size: 11px;
+            color: #9ca3af;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .price-diff {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 12px;
+        }
+        .price-diff.saved { background: #dcfce7; color: #15803d; }
+        .price-diff.extra { background: #fee2e2; color: #dc2626; }
+        .price-diff.same  { background: #f3f4f6; color: #6b7280; }
+
+        /* ===== STORE ACTION BUTTONS ===== */
+        .store-btn {
+            width: 100%;
+            margin-top: 11px;
+            padding: 10px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        .store-btn.dark  { background: #111827; color: white; }
+        .store-btn.dark:hover  { background: #374151; }
+        .store-btn.blue  { background: #eff6ff; color: #1d4ed8; border: 1.5px solid #bfdbfe; }
+        .store-btn.blue:hover  { background: #dbeafe; }
+        .store-btn.ghost { background: #f9fafb; color: #9ca3af; border: 1.5px solid #e5e7eb; cursor: default; }
+
+        /* ===== DETAILS SECTION ===== */
+        .details-section { margin-top: 4px; }
+        .details-toggle {
+            width: 100%;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 9px 14px;
+            font-size: 13px;
+            color: #374151;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            transition: background 0.15s;
+        }
+        .details-toggle:hover { background: #f9fafb; }
+        .toggle-arrow { transition: transform 0.2s; }
+        .toggle-arrow.open { transform: rotate(180deg); }
+        .details-content { display: none; }
+        .details-content.open { display: block; }
+        .section-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 10px 0 5px;
+        }
+        .product-list {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            overflow: hidden;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .product-item {
+            padding: 7px 12px;
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 6px;
+        }
+        .product-item:last-child { border-bottom: none; }
+        .product-name {
+            color: #374151;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .product-prices {
+            display: flex;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .p-shufersal { color: #6b7280; }
+        .p-rami { color: #15803d; }
+        .p-victory { color: #1d4ed8; }
+        .sub-btn {
+            background: #1d4ed8;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 10px;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .sub-btn:hover { background: #1e40af; }
+        .out-section {
+            background: white;
+            border: 1px solid #fde68a;
+            border-radius: 10px;
+            overflow: hidden;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .out-item {
+            padding: 7px 12px;
+            border-bottom: 1px solid #fef9c3;
+            font-size: 12px;
+        }
+        .out-item:last-child { border-bottom: none; }
+        .out-item-name { color: #92400e; font-weight: 600; }
+        .out-item-sub { margin-top: 4px; }
+        .missing-section {
+            background: white;
+            border: 1px solid #fca5a5;
+            border-radius: 10px;
+            overflow: hidden;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .missing-item {
+            padding: 6px 12px;
+            border-bottom: 1px solid #fee2e2;
+            font-size: 11px;
+            color: #9ca3af;
+        }
+        .missing-item:last-child { border-bottom: none; }
+    </style>
+</head>
+<body>
+    <!-- HEADER -->
+    <div class="header">
+        <div class="header-brand">
+            <span class="brand-icon">🧾</span>
+            <span class="brand-name">יועץ קנייה חכם</span>
+        </div>
+        <div class="header-settings" id="settingsBtn">בחירת סופרים להשוואה</div>
+    </div>
+
+    <!-- STORE SELECTION PANEL -->
+    <div id="storePanel">
+        <div class="store-panel-title">בחר סופרים להשוואה</div>
+
+        <!-- Shufersal - always compared -->
+        <div class="store-toggle-row">
+            <div>
+                <div class="store-toggle-label">
+                    <span class="store-emoji">🏪</span> שופרסל
+                </div>
+                <div class="store-note">הסופר הנוכחי שלך (תמיד פעיל)</div>
+            </div>
+            <label class="toggle-switch">
+                <input type="checkbox" checked disabled>
+                <span class="toggle-track"></span>
+            </label>
+        </div>
+
+        <!-- Rami Levy -->
+        <div class="store-toggle-row">
+            <div>
+                <div class="store-toggle-label">
+                    <span class="store-emoji">🛒</span> רמי לוי
+                </div>
+                <div class="store-note">מחיר חי בזמן אמת</div>
+            </div>
+            <label class="toggle-switch">
+                <input type="checkbox" id="toggleRamiLevy" checked>
+                <span class="toggle-track"></span>
+            </label>
+        </div>
+
+        <!-- Victory -->
+        <div class="store-toggle-row">
+            <div>
+                <div class="store-toggle-label">
+                    <span class="store-emoji">🏬</span> ויקטורי
+                </div>
+                <div class="store-note">מחיר חי בזמן אמת</div>
+            </div>
+            <label class="toggle-switch">
+                <input type="checkbox" id="toggleVictory" checked>
+                <span class="toggle-track"></span>
+            </label>
+        </div>
+    </div>
+
+    <!-- COMPARE BUTTON -->
+    <button id="compareBtn">🔍 השווה עגלה עכשיו</button>
+    <div id="status"></div>
+    <div id="result"></div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
