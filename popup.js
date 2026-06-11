@@ -1001,8 +1001,18 @@ async function compareCarts() {
             document.getElementById('switchToVictory')?.addEventListener('click', () => {
                 const victoryCart = finalCartToTransfer.filter(i => i.quantity > 0).map(i => {
                     const dbKey = i.shufersal_code.startsWith('P_') ? i.shufersal_code : 'P_' + i.shufersal_code;
-                    const dbItem = pricesData[dbKey];
+                    let dbItem = pricesData[dbKey];
                     const cleanBarcode = i.shufersal_code.replace('P_', '');
+
+                    // --- התוספת החכמה שלנו: חיפוש גמיש שמתעלם מהאפסים ---
+                    if (!dbItem) {
+                        const matchingKey = Object.keys(pricesData).find(k => k.endsWith(cleanBarcode));
+                        if (matchingKey) {
+                            dbItem = pricesData[matchingKey];
+                        }
+                    }
+                    // --------------------------------------------------
+
                     return {
                         name: i.name, amount: i.quantity, quantity: i.quantity,
                         shufersal_code: i.shufersal_code,
