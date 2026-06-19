@@ -58,7 +58,7 @@ async function transferCartToShufersal(cartItems) {
     if (!csrfToken) {
         updateShufersalStatus('⚠️ אזהרה: לא נמצא טוקן CSRF. מנסה בכל זאת...');
     } else {
-        updateShufersalStatus(`🔑 טוקן CSRF נמצא! מכין ${cartItems.length} מוצרים...`);
+        updateShufersalStatus(`🔑 טוקן CSRF נמצא: ${csrfToken.substring(0, 8)}... מכין ${cartItems.length} מוצרים...`);
     }
 
     const headers = {
@@ -139,13 +139,41 @@ async function transferCartToShufersal(cartItems) {
                     body: formData.toString()
                 });
 
-                console.log(`Shufersal Injector: Response from ${url} for ${code}: status = ${resp.status}`);
+                const text = await resp.text();
+                console.log(`Shufersal Injector: Response from ${url} for ${code}: status = ${resp.status}`, text.substring(0, 300));
+                
                 urlStatuses[url] = resp.status;
+                
                 if (resp.ok) {
+                    // Check if response is HTML (redirect / login page)
+                    if (text.trim().startsWith('<') || text.includes('<!DOCTYPE html>') || text.includes('<html')) {
+                        console.warn(`Shufersal Injector: Received HTML instead of JSON for ${code}. This usually means redirect due to expired session or invalid CSRF.`);
+                        urlStatuses[url] = 'HTML_REDIRECT';
+                        continue;
+                    }
+                    
+                    let parsed = null;
+                    try {
+                        parsed = JSON.parse(text);
+                    } catch (e) {}
+                    
+                    if (parsed) {
+                        // If it is JSON, check Hybris success indicators
+                        if (parsed.statusCode && parsed.statusCode !== 'success') {
+                            console.warn(`Shufersal Injector: Server returned JSON status: ${parsed.statusCode} for ${code}`);
+                            urlStatuses[url] = `JSON_ERROR_${parsed.statusCode}`;
+                            continue;
+                        }
+                        if (parsed.quantityAdded === 0) {
+                            console.warn(`Shufersal Injector: Server returned quantityAdded = 0 for ${code}`);
+                            urlStatuses[url] = 'JSON_QTY_0';
+                            continue;
+                        }
+                    }
+                    
                     itemSuccess = true;
                     break;
                 } else {
-                    const text = await resp.text();
                     console.warn(`Shufersal Injector: Failed response from ${url} for ${code}:`, text.substring(0, 300));
                 }
             } catch (e) {
