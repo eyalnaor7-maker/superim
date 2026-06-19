@@ -129,6 +129,8 @@ async function transferCartToShufersal(cartItems) {
         }
 
         let itemSuccess = false;
+        let itemLog = `Product: ${item.name || code}\n`;
+        
         for (const url of urlsToTry) {
             try {
                 console.log(`Shufersal Injector: Sending add request to ${url} for ${code}`);
@@ -143,11 +145,12 @@ async function transferCartToShufersal(cartItems) {
                 console.log(`Shufersal Injector: Response from ${url} for ${code}: status = ${resp.status}`, text.substring(0, 300));
                 
                 urlStatuses[url] = resp.status;
+                itemLog += `- ${url} -> Status ${resp.status}\n  Response: ${text.substring(0, 150).replace(/\r?\n|\r/g, " ")}\n`;
                 
                 if (resp.ok) {
                     // Check if response is HTML (redirect / login page)
                     if (text.trim().startsWith('<') || text.includes('<!DOCTYPE html>') || text.includes('<html')) {
-                        console.warn(`Shufersal Injector: Received HTML instead of JSON for ${code}. This usually means redirect due to expired session or invalid CSRF.`);
+                        console.warn(`Shufersal Injector: Received HTML instead of JSON for ${code}.`);
                         urlStatuses[url] = 'HTML_REDIRECT';
                         continue;
                     }
@@ -178,23 +181,28 @@ async function transferCartToShufersal(cartItems) {
                 }
             } catch (e) {
                 urlStatuses[url] = 'NetworkError';
+                itemLog += `- ${url} -> NetworkError: ${e.message}\n`;
                 console.error(`Shufersal Injector: Fetch error on ${url} for ${code}:`, e);
             }
         }
 
         if (itemSuccess) {
             successCount++;
+            addShufersalDebugLog(`✅ Success: ${item.name || code}\n${itemLog}\n`);
+        } else {
+            addShufersalDebugLog(`❌ Failed: ${item.name || code}\n${itemLog}\n`);
         }
     }
 
     if (successCount > 0) {
-        updateShufersalStatus(`🎉 הצלחה! ${successCount} מתוך ${cartItems.length} מוצרים הועברו לעגלה! מרענן...`);
-        setTimeout(() => window.location.reload(), 2000);
+        updateShufersalStatus(`🎉 סיום: ${successCount} מתוך ${cartItems.length} מוצרים הועברו בהצלחה.\n\nאנא בדוק את לוג הדיאגנוסטיקה למטה אם חלק מהמוצרים לא מופיעים, ולחץ על כפתור הרענון לעדכון הדף.`);
+        const actionArea = document.getElementById('shufersal-action-area');
+        if (actionArea) actionArea.style.display = 'block';
     } else {
         const statusReport = Object.entries(urlStatuses)
             .map(([url, status]) => `- ${url}: ${status}`)
             .join('\n');
-        updateShufersalStatus(`❌ שגיאה: לא הצלחנו להעביר אף מוצר.\n\nתוצאות נתיבים:\n${statusReport}\n\nאנא ודא שאתה מחובר לחשבון שלך בשופרסל ונסה שנית.`);
+        updateShufersalStatus(`❌ שגיאה: לא הצלחנו להעביר אף מוצר.\n\nתוצאות נתיבים:\n${statusReport}\n\nאנא בדוק את הלוג למטה ושתף אותי בתוצאה.`);
     }
 }
 
@@ -205,19 +213,39 @@ function createShufersalStatusWindow() {
     const container = document.createElement('div');
     container.id = 'shufersal-compare-status';
     container.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px; width: 340px;
+        position: fixed; bottom: 20px; right: 20px; width: 440px; max-height: 480px;
         background: white; border: 3px solid #e8132b; border-radius: 15px;
         box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 999999;
         padding: 20px; direction: rtl; font-family: Arial, sans-serif; text-align: right;
+        display: flex; flex-direction: column; overflow: hidden;
     `;
     container.innerHTML = `
         <h3 style="margin:0 0 10px 0; color:#e8132b; text-align: center;">פרויקט סופרים - שופרסל</h3>
-        <p id="shufersal-status-text" style="margin:0; font-size:14px; font-weight:bold; white-space:pre-wrap; color:#333; line-height: 1.4;"></p>
+        <div id="shufersal-status-content" style="flex: 1; overflow-y: auto; margin-bottom: 10px; min-height: 250px;">
+            <p id="shufersal-status-text" style="margin:0; font-size:14px; font-weight:bold; white-space:pre-wrap; color:#333; line-height: 1.4;">מתחיל...</p>
+            <div id="shufersal-debug-log" style="margin-top:10px; font-family: monospace; font-size:11px; background:#f4f4f4; padding:8px; border-radius:5px; border:1px solid #ccc; max-height:180px; overflow-y:auto; white-space:pre-wrap; display:none; direction: ltr; text-align: left;"></div>
+        </div>
+        <div id="shufersal-action-area" style="text-align: center; display:none;">
+            <button id="shufersal-refresh-btn" style="background:#e8132b; color:white; border:none; padding:10px 20px; font-size:14px; font-weight:bold; border-radius:8px; cursor:pointer; box-shadow:0 3px 6px rgba(0,0,0,0.2);">רענן עמוד לעדכון העגלה 🔄</button>
+        </div>
     `;
     document.body.appendChild(container);
+
+    document.getElementById('shufersal-refresh-btn').addEventListener('click', () => {
+        window.location.reload();
+    });
 }
 
 function updateShufersalStatus(text) {
     const el = document.getElementById('shufersal-status-text');
     if (el) el.innerText = text;
+}
+
+function addShufersalDebugLog(text) {
+    const el = document.getElementById('shufersal-debug-log');
+    if (el) {
+        el.style.display = 'block';
+        el.innerText += text + '\n';
+        el.scrollTop = el.scrollHeight;
+    }
 }
