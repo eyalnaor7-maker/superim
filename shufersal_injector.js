@@ -170,22 +170,37 @@ async function transferCartToShufersal(cartItems) {
 
         // Define the specific attempts based on exact F12 network logs
         const attempts = [
-            // Attempt 1: Exact F12 JSON structure with cartContext params
+            // Attempt 1: Exact F12 JSON structure with cartContext params (openFrom=PRODUCT)
             {
-                url: '/online/he/cart/add?cartContext%5BopenFrom%5D=DEPARTMENT&cartContext%5BrecommendationType%5D=REGULAR',
+                url: '/online/he/cart/add?cartContext%5BopenFrom%5D=PRODUCT&cartContext%5BrecommendationType%5D=REGULAR',
                 type: 'json',
-                label: 'json-exact-f12',
+                label: 'json-exact-f12-product',
                 reqBody: JSON.stringify({
                     productCodePost: code,
                     productCode: code,
+                    sellingMethod: "BY_UNIT",
                     qty: String(item.quantity || 1),
                     frontQuantity: String(item.quantity || 1),
                     comment: "",
-                    affiliateCode: "",
-                    sellingMethod: "BY_UNIT"
+                    affiliateCode: ""
                 })
             },
-            // Attempt 2: Exact F12 JSON structure without query params
+            // Attempt 2: Exact F12 JSON structure with cartContext params (openFrom=DEPARTMENT)
+            {
+                url: '/online/he/cart/add?cartContext%5BopenFrom%5D=DEPARTMENT&cartContext%5BrecommendationType%5D=REGULAR',
+                type: 'json',
+                label: 'json-exact-f12-dept',
+                reqBody: JSON.stringify({
+                    productCodePost: code,
+                    productCode: code,
+                    sellingMethod: "BY_UNIT",
+                    qty: String(item.quantity || 1),
+                    frontQuantity: String(item.quantity || 1),
+                    comment: "",
+                    affiliateCode: ""
+                })
+            },
+            // Attempt 3: Exact F12 JSON structure without query params
             {
                 url: '/online/he/cart/add',
                 type: 'json',
@@ -193,14 +208,14 @@ async function transferCartToShufersal(cartItems) {
                 reqBody: JSON.stringify({
                     productCodePost: code,
                     productCode: code,
+                    sellingMethod: "BY_UNIT",
                     qty: String(item.quantity || 1),
                     frontQuantity: String(item.quantity || 1),
                     comment: "",
-                    affiliateCode: "",
-                    sellingMethod: "BY_UNIT"
+                    affiliateCode: ""
                 })
             },
-            // Attempt 3: Trailing slash exact JSON
+            // Attempt 4: Trailing slash exact JSON
             {
                 url: '/online/he/cart/add/',
                 type: 'json',
@@ -208,21 +223,28 @@ async function transferCartToShufersal(cartItems) {
                 reqBody: JSON.stringify({
                     productCodePost: code,
                     productCode: code,
+                    sellingMethod: "BY_UNIT",
                     qty: String(item.quantity || 1),
                     frontQuantity: String(item.quantity || 1),
                     comment: "",
-                    affiliateCode: "",
-                    sellingMethod: "BY_UNIT"
+                    affiliateCode: ""
                 })
             },
-            // Fallback 4: Standard Form Post to /online/he/cart/add
+            // Fallback 5: Standard Form Post to /online/he/cart/add (openFrom=PRODUCT)
+            {
+                url: '/online/he/cart/add?cartContext%5BopenFrom%5D=PRODUCT&cartContext%5BrecommendationType%5D=REGULAR',
+                type: 'form',
+                label: 'form-exact-f12-product',
+                reqBody: null
+            },
+            // Fallback 6: Standard Form Post to /online/he/cart/add (openFrom=DEPARTMENT)
             {
                 url: '/online/he/cart/add?cartContext%5BopenFrom%5D=DEPARTMENT&cartContext%5BrecommendationType%5D=REGULAR',
                 type: 'form',
-                label: 'form-exact-f12',
+                label: 'form-exact-f12-dept',
                 reqBody: null
             },
-            // Fallback 5: Form Post to addEntry
+            // Fallback 7: Form Post to addEntry
             {
                 url: '/online/he/cart/addEntry',
                 type: 'form',
@@ -253,12 +275,13 @@ async function transferCartToShufersal(cartItems) {
                 let reqHeaders = { ...headers };
 
                 if (type === 'json') {
-                    reqHeaders['Content-Type'] = 'application/json;charset=UTF-8';
+                    reqHeaders['Content-Type'] = 'application/json';
                     bodyToSend = reqBody;
                 } else {
                     reqHeaders['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
                     const formData = new URLSearchParams();
-                    formData.append('cartContext[openFrom]', 'DEPARTMENT');
+                    const openFromVal = label.includes('product') ? 'PRODUCT' : 'DEPARTMENT';
+                    formData.append('cartContext[openFrom]', openFromVal);
                     formData.append('cartContext[recommendationType]', 'REGULAR');
                     formData.append('productCodePost', code);
                     formData.append('productCode', code);
