@@ -17,7 +17,8 @@
     "*://*.victoryonline.co.il/*",
     "*://*.mck.co.il/*",
     "*://firestore.googleapis.com/*",
-    "*://generativelanguage.googleapis.com/*"
+    "*://generativelanguage.googleapis.com/*",
+    "*://*.supabase.co/*"
   ],
   "web_accessible_resources": [
     {
