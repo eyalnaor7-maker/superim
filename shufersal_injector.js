@@ -55,6 +55,12 @@ async function transferCartToShufersal(cartItems) {
     console.log("Shufersal Injector: Detected CSRF Token:", csrfToken);
     console.log("Shufersal Injector: Items to transfer:", cartItems);
 
+    if (!csrfToken) {
+        updateShufersalStatus('⚠️ אזהרה: לא נמצא טוקן CSRF. מנסה בכל זאת...');
+    } else {
+        updateShufersalStatus(`🔑 טוקן CSRF נמצא! מכין ${cartItems.length} מוצרים...`);
+    }
+
     const headers = {
         'Accept': 'application/json, text/plain, */*',
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -65,18 +71,20 @@ async function transferCartToShufersal(cartItems) {
         headers['X-Csrf-Token'] = csrfToken;
     }
 
-    updateShufersalStatus(`מעביר ${cartItems.length} מוצרים לעגלה...`);
-
     let successCount = 0;
+    let failCount = 0;
+    let lastErrorStatus = '';
 
-    for (const item of cartItems) {
+    for (let idx = 0; idx < cartItems.length; idx++) {
+        const item = cartItems[idx];
         if (!item.shufersal_code) {
             console.warn("Shufersal Injector: Skipped item due to missing shufersal_code:", item);
             continue;
         }
         const code = item.shufersal_code.startsWith('P_') ? item.shufersal_code : 'P_' + item.shufersal_code;
 
-        // בניית החבילה המדויקת שגילית בשטח!
+        updateShufersalStatus(`שולח מוצר ${idx + 1}/${cartItems.length}: ${item.name || code}...`);
+
         const formData = new URLSearchParams();
         formData.append('cartContext[openFrom]', 'DEPARTMENT');
         formData.append('cartContext[recommendationType]', 'REGULAR');
@@ -104,19 +112,23 @@ async function transferCartToShufersal(cartItems) {
             if (resp.ok) {
                 successCount++;
             } else {
+                failCount++;
+                lastErrorStatus = resp.status;
                 const text = await resp.text();
                 console.warn(`Shufersal Injector: Failed response for ${code}:`, text.substring(0, 300));
             }
         } catch (e) {
+            failCount++;
+            lastErrorStatus = 'NetworkError';
             console.error('Shufersal Injector: Failed to add to Shufersal', code, e);
         }
     }
 
     if (successCount > 0) {
-        updateShufersalStatus(`הצלחה! ${successCount} מוצרים הועברו לעגלה שלך! מרענן עמוד...`);
+        updateShufersalStatus(`🎉 הצלחה! ${successCount} מוצרים הועברו לעגלה! מרענן...`);
         setTimeout(() => window.location.reload(), 2000);
     } else {
-        updateShufersalStatus('לא הצלחתי להוסיף מוצרים. נסה שוב לאחר התחברות לשופרסל.');
+        updateShufersalStatus(`❌ שגיאה: 0 מתוך ${cartItems.length} מוצרים הועברו. (קוד שגיאה אחרון: ${lastErrorStatus}). אנא ודא שאתה מחובר.`);
     }
 }
 
