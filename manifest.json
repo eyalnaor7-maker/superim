@@ -44,6 +44,11 @@
     {
       "matches": ["*://*.shufersal.co.il/*"],
       "js": ["shufersal_injector.js"]
+    },
+    {
+      "matches": ["*://*.shufersal.co.il/*"],
+      "js": ["shufersal_main_helper.js"],
+      "world": "MAIN"
     }
   ]
 }
