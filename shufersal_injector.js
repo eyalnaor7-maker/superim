@@ -44,7 +44,7 @@ async function transferCartToShufersal(cartItems) {
     if (!csrfToken) {
         const scripts = document.querySelectorAll('script');
         for (const script of scripts) {
-            const match = script.textContent.match(/CSRFToken\s*:\s*['"]([^'"]+)['"]/);
+            const match = script.textContent.match(/CSRFToken\s*[:=]\s*['"]([^'"]+)['"]/i);
             if (match) {
                 csrfToken = match[1];
                 break;
@@ -64,6 +64,7 @@ async function transferCartToShufersal(cartItems) {
     const headers = {
         'Accept': 'application/json, text/plain, */*',
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest'
     };
     if (csrfToken) {
         headers['CSRFToken'] = csrfToken;
@@ -72,8 +73,35 @@ async function transferCartToShufersal(cartItems) {
     }
 
     let successCount = 0;
-    let failCount = 0;
-    let lastErrorStatus = '';
+    let urlStatuses = {};
+
+    const urlsToTry = [
+        '/online/he/cart/addEntry',
+        '/online/he/cart/addEntry/',
+        '/online/he/cart/add',
+        '/online/he/cart/add/',
+        '/online/he/cart/addentry',
+        '/online/he/cart/addentry/',
+        '/he/cart/addEntry',
+        '/he/cart/addEntry/',
+        '/he/cart/add',
+        '/he/cart/add/',
+        '/he/cart/addentry',
+        '/he/cart/addentry/'
+    ];
+
+    const formTag = document.querySelector('form[action*="/cart/"]');
+    if (formTag) {
+        const actionUrl = formTag.getAttribute('action');
+        if (actionUrl && !urlsToTry.includes(actionUrl)) {
+            urlsToTry.unshift(actionUrl);
+            if (!actionUrl.endsWith('/')) {
+                urlsToTry.unshift(actionUrl + '/');
+            }
+        }
+    }
+
+    console.log("Shufersal Injector: Endpoints to attempt:", urlsToTry);
 
     for (let idx = 0; idx < cartItems.length; idx++) {
         const item = cartItems[idx];
@@ -95,40 +123,50 @@ async function transferCartToShufersal(cartItems) {
         formData.append('comment', '');
         formData.append('frontQuantity', item.quantity || 1);
         formData.append('qty', item.quantity || 1);
+        formData.append('quantity', item.quantity || 1);
         if (csrfToken) {
             formData.append('CSRFToken', csrfToken);
         }
 
-        try {
-            console.log(`Shufersal Injector: Sending addEntry for ${code} with quantity ${item.quantity || 1}`);
-            const resp = await fetch('/online/he/cart/addEntry', {
-                method: 'POST',
-                headers,
-                credentials: 'include',
-                body: formData.toString()
-            });
+        let itemSuccess = false;
+        for (const url of urlsToTry) {
+            try {
+                console.log(`Shufersal Injector: Sending add request to ${url} for ${code}`);
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers,
+                    credentials: 'include',
+                    body: formData.toString()
+                });
 
-            console.log(`Shufersal Injector: Response for ${code}: status = ${resp.status}`);
-            if (resp.ok) {
-                successCount++;
-            } else {
-                failCount++;
-                lastErrorStatus = resp.status;
-                const text = await resp.text();
-                console.warn(`Shufersal Injector: Failed response for ${code}:`, text.substring(0, 300));
+                console.log(`Shufersal Injector: Response from ${url} for ${code}: status = ${resp.status}`);
+                urlStatuses[url] = resp.status;
+                if (resp.ok) {
+                    itemSuccess = true;
+                    break;
+                } else {
+                    const text = await resp.text();
+                    console.warn(`Shufersal Injector: Failed response from ${url} for ${code}:`, text.substring(0, 300));
+                }
+            } catch (e) {
+                urlStatuses[url] = 'NetworkError';
+                console.error(`Shufersal Injector: Fetch error on ${url} for ${code}:`, e);
             }
-        } catch (e) {
-            failCount++;
-            lastErrorStatus = 'NetworkError';
-            console.error('Shufersal Injector: Failed to add to Shufersal', code, e);
+        }
+
+        if (itemSuccess) {
+            successCount++;
         }
     }
 
     if (successCount > 0) {
-        updateShufersalStatus(`🎉 הצלחה! ${successCount} מוצרים הועברו לעגלה! מרענן...`);
+        updateShufersalStatus(`🎉 הצלחה! ${successCount} מתוך ${cartItems.length} מוצרים הועברו לעגלה! מרענן...`);
         setTimeout(() => window.location.reload(), 2000);
     } else {
-        updateShufersalStatus(`❌ שגיאה: 0 מתוך ${cartItems.length} מוצרים הועברו. (קוד שגיאה אחרון: ${lastErrorStatus}). אנא ודא שאתה מחובר.`);
+        const statusReport = Object.entries(urlStatuses)
+            .map(([url, status]) => `- ${url}: ${status}`)
+            .join('\n');
+        updateShufersalStatus(`❌ שגיאה: לא הצלחנו להעביר אף מוצר.\n\nתוצאות נתיבים:\n${statusReport}\n\nאנא ודא שאתה מחובר לחשבון שלך בשופרסל ונסה שנית.`);
     }
 }
 
@@ -139,14 +177,14 @@ function createShufersalStatusWindow() {
     const container = document.createElement('div');
     container.id = 'shufersal-compare-status';
     container.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px; width: 320px;
+        position: fixed; bottom: 20px; right: 20px; width: 340px;
         background: white; border: 3px solid #e8132b; border-radius: 15px;
         box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 999999;
-        padding: 20px; direction: rtl; font-family: Arial, sans-serif; text-align: center;
+        padding: 20px; direction: rtl; font-family: Arial, sans-serif; text-align: right;
     `;
     container.innerHTML = `
-        <h3 style="margin:0 0 10px 0; color:#e8132b;">פרויקט סופרים - שופרסל</h3>
-        <p id="shufersal-status-text" style="margin:0; font-size:16px; font-weight:bold;">מתחיל...</p>
+        <h3 style="margin:0 0 10px 0; color:#e8132b; text-align: center;">פרויקט סופרים - שופרסל</h3>
+        <p id="shufersal-status-text" style="margin:0; font-size:14px; font-weight:bold; white-space:pre-wrap; color:#333; line-height: 1.4;"></p>
     `;
     document.body.appendChild(container);
 }
