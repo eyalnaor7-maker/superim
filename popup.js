@@ -19,7 +19,35 @@ function extractWeight(name) {
 }
 
 async function findCandidatesFromDB(productName, targetStore) {
-    if (!SUPABASE_ANON_KEY) return [];
+    if (!SUPABASE_ANON_KEY) {
+        const allTokens = productName.split(/[\s\-\/,.'"%*]+/).map(w => w.trim()).filter(w => w.length > 1 && !STOP_WORDS.has(w) && !/^\d+$/.test(w));
+        const candidates = [];
+        
+        for (const [, item] of Object.entries(pricesData)) {
+            if (item.name === productName) continue;
+            let score = 0;
+            for (const token of allTokens) {
+                if (item.name.includes(token)) score++;
+            }
+            if (score >= 2) {
+                let codeKey = `${targetStore}_code`;
+                let priceKey = `${targetStore}_price`;
+                let code = item[codeKey] || (targetStore === 'victory' ? item.victory_retailer_id : null);
+                let price = item[priceKey] || 0;
+                
+                if (code) {
+                    candidates.push({
+                        code: String(code),
+                        name: item.name,
+                        price: parseFloat(price),
+                        score: score
+                    });
+                }
+            }
+        }
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates.slice(0, 8);
+    }
 
     const headers = {
         "apikey": SUPABASE_ANON_KEY,
@@ -94,6 +122,7 @@ const GEMINI_MODEL = 'gemini-2.0-flash-lite';
 let SUPABASE_URL = 'https://icdethibkzwzguwmfoef.supabase.co';
 let SUPABASE_ANON_KEY = '';
 let substitutionLog = [];
+let pricesData = {};
 
 try {
     fetch(chrome.runtime.getURL('config.json'))
@@ -1743,18 +1772,27 @@ async function compareCarts() {
             return;
         }
 
-        // 2. Query Supabase directly
-        statusDiv.innerHTML = 'טוען נתונים מ-Supabase...';
-        const pricesData = {};
-
+        // 2. Query Database / Load Local Fallback
         const codes = rawCartItems.map(item => item.code);
-        const headers = {
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-            "Content-Type": "application/json"
-        };
 
-        if (activeStore === 'shufersal' || activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
+        if (!SUPABASE_ANON_KEY) {
+            statusDiv.innerHTML = '🔌 עובד במצב מקומי (קובץ מחירים)...';
+            try {
+                const res = await fetch(chrome.runtime.getURL('prices.json'));
+                pricesData = await res.json();
+            } catch (err) {
+                console.error("שגיאה בטעינת קובץ נתונים מקומי:", err);
+            }
+        } else {
+            statusDiv.innerHTML = 'טוען נתונים מ-Supabase...';
+            pricesData = {};
+            const headers = {
+                "apikey": SUPABASE_ANON_KEY,
+                "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+                "Content-Type": "application/json"
+            };
+
+            if (activeStore === 'shufersal' || activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
             const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
             const queryParams = new URLSearchParams({
                 select: 'barcode,name,store_products(store_name,store_code,price)',
@@ -1867,6 +1905,7 @@ async function compareCarts() {
                 console.error("שגיאה בפנייה ל-Supabase:", err);
             }
         }
+    }
 
         // 3. Map products
         const matchedItems = [];
