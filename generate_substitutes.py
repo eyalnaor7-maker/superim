@@ -14,6 +14,7 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+USE_GEMINI = False
 GEMINI_API_KEY = "AIzaSyCu_EXWBvOSXoMn_9lqB_e3JFm7wZ702Bk"
 
 DB_PASSWORD = None
@@ -32,6 +33,27 @@ if os.path.exists('config.json'):
 
 def safe_str(val):
     return val.encode('ascii', errors='replace').decode('ascii')
+
+def extract_pack_size(name):
+    # Match text patterns
+    if 'שישייה' in name or 'שישיה' in name:
+        return 6
+    if 'רביעייה' in name or 'רביעיה' in name:
+        return 4
+    if 'זוג' in name:
+        return 2
+        
+    # Match "6*330" or "6 * 330" or "6x330"
+    match = re.search(r'(\d+)\s*[\*xX]\s*\d+', name)
+    if match:
+        return int(match.group(1))
+
+    # Match "6 יח" or "6 יחידות" or "6 יח'"
+    match = re.search(r'(\d+)\s*(יח\'|יחידות|יח)', name)
+    if match:
+        return int(match.group(1))
+        
+    return 1
 
 def extract_weight(name):
     # Regex to find weight value and unit
@@ -100,10 +122,25 @@ def ask_gemini_for_substitutes(original_name, candidates):
         print(f" (AI error: {e})", end="")
     return None, None
 
-def find_candidates_locally(original_product, all_products):
+STOP_WORDS_HEB = {
+    'גרם', 'מ"ל', 'מל', 'ליטר', 'ק"ג', 'קג', 'יח', 'יחידות', 'של', 'עם', 'בלי', 
+    'ו', 'ב', 'ל', 'מ', 'פרוס', 'טרי', 'קפוא', 'בטעם', 'מארז', 'בקבוק', 'פחית', 
+    'שקית', 'קופסה', 'קופסא', 'יחידה', 'חבילה', 'מארזים', 'בקר'
+}
+
+def get_significant_words(name):
+    # Extract words with 2 or more letters, ignoring numbers
+    words = re.findall(r'\b[א-תa-zA-Z]{2,}\b', name.lower())
+    return {w for w in words if w not in STOP_WORDS_HEB}
+
+def find_candidates_locally(original_product, all_products, precomputed):
     orig_barcode = original_product['barcode']
     orig_name = original_product['name']
-    orig_weight = extract_weight(orig_name)
+    
+    orig_meta = precomputed[orig_barcode]
+    orig_pack = orig_meta['pack_size']
+    orig_weight = orig_meta['weight']
+    sig_words_orig = orig_meta['sig_words']
     
     candidates = []
     
@@ -115,8 +152,20 @@ def find_candidates_locally(original_product, all_products):
         if not (p.get("rami_levy_code") or p.get("victory_code") or p.get("shufersal_code")):
             continue
             
+        cand_meta = precomputed[barcode]
+        
+        # Pack size matching: multi-packs must substitute with matching multi-packs
+        if orig_pack != cand_meta['pack_size']:
+            continue
+
+        # Ensure there is at least one significant overlapping word to prevent cross-category matches
+        sig_words_cand = cand_meta['sig_words']
+        sig_overlap = len(sig_words_orig & sig_words_cand)
+        if sig_overlap == 0:
+            continue
+
         # Filter by weight compatibility
-        weight = extract_weight(p['name'])
+        weight = cand_meta['weight']
         if orig_weight and weight:
             if weight['unit'] != orig_weight['unit']:
                 continue
@@ -124,10 +173,10 @@ def find_candidates_locally(original_product, all_products):
             if ratio < 0.5 or ratio > 2.0:
                 continue
 
-        # Calculate name similarity using SequenceMatcher
+        # Calculate name similarity using SequenceMatcher (only runs on filtered candidates!)
         sim = SequenceMatcher(None, orig_name, p['name']).ratio()
         
-        # Token overlap
+        # Token overlap (using all tokens including brands, but excluding stop words)
         words_orig = set(orig_name.split())
         words_cand = set(p['name'].split())
         overlap = len(words_orig & words_cand)
@@ -146,7 +195,7 @@ def find_candidates_locally(original_product, all_products):
         
     candidates.sort(key=lambda x: x['score'], reverse=True)
     
-    # Return top 5 candidates for Gemini to evaluate
+    # Return top 5 candidates
     return candidates[:5]
 
 def main():
@@ -201,66 +250,96 @@ def main():
         conn.close()
         return
 
-    # 2. Select the first 10 products
-    first_10_barcodes = list(all_products.keys())[:10]
+    # Precompute metadata for all products to boost performance
+    print("Pre-computing product metadata...")
+    precomputed = {}
+    for barcode, p in all_products.items():
+        precomputed[barcode] = {
+            'pack_size': extract_pack_size(p['name']),
+            'weight': extract_weight(p['name']),
+            'sig_words': get_significant_words(p['name'])
+        }
+    print("✅ Metadata pre-computed.")
+
+    # 2. Select products to process
+    RUN_LIMIT = None  # Set to None to run on all products
     
-    print("\n🚀 Processing first 10 products for substitutes...")
+    all_barcodes = list(all_products.keys())
+    if RUN_LIMIT is not None:
+        barcodes_to_run = all_barcodes[:RUN_LIMIT]
+        print(f"\n🚀 Processing first {RUN_LIMIT} products for substitutes (Local Mode)...")
+    else:
+        barcodes_to_run = all_barcodes
+        print(f"\n🚀 Processing ALL {len(barcodes_to_run)} products for substitutes (Local Mode)...")
     
     substitutes_to_insert = []
     
-    for idx, barcode in enumerate(first_10_barcodes, 1):
+    for idx, barcode in enumerate(barcodes_to_run, 1):
         product = {
             'barcode': barcode,
             'name': all_products[barcode]['name']
         }
-        print(f"\n[{idx}/10] Original: '{product['name']}'")
         
         # Generate candidates
-        candidates = find_candidates_locally(product, all_products)
-        sub1, sub2 = ask_gemini_for_substitutes(product['name'], candidates)
+        candidates = find_candidates_locally(product, all_products, precomputed)
         
-        # Fallback to local similarity if Gemini fails or is not set up
-        is_fallback = False
-        if not sub1 and candidates:
-            is_fallback = True
-            # Only choose fallback if similarity score is decent
-            if candidates[0]['score'] >= 50:
-                sub1 = candidates[0]
-                if len(candidates) >= 2 and candidates[1]['score'] >= 45:
-                    sub2 = candidates[1]
-
-        # Display and accumulate results
-        if sub1:
-            source_str = "Fallback" if is_fallback else "AI"
-            print(f"  👉 Primary Substitute ({source_str}):   '{sub1['name']}' (Barcode: {sub1['barcode']})")
-            substitutes_to_insert.append((barcode, sub1['barcode'], 1))
+        sub1, sub2 = None, None
+        if USE_GEMINI:
+            sub1, sub2 = ask_gemini_for_substitutes(product['name'], candidates)
+            # Fallback to local similarity if Gemini fails
+            if not sub1 and candidates:
+                if candidates[0]['score'] >= 50:
+                    sub1 = candidates[0]
+                    if len(candidates) >= 2 and candidates[1]['score'] >= 45:
+                        sub2 = candidates[1]
         else:
-            print("  ❌ Primary Substitute:   No suitable match found.")
+            # Local matching engine (no API costs)
+            if candidates:
+                if candidates[0]['score'] >= 50:
+                    sub1 = candidates[0]
+                    if len(candidates) >= 2 and candidates[1]['score'] >= 45:
+                        sub2 = candidates[1]
+
+        # Display and accumulate results if we found matches
+        if sub1 or sub2:
+            print(f"\n[{idx}/{len(barcodes_to_run)}] Original: '{product['name']}'")
+            if sub1:
+                print(f"  👉 Primary Substitute:   '{sub1['name']}' (Barcode: {sub1['barcode']}, Score: {sub1['score']:.1f})")
+            if sub2:
+                print(f"  👉 Secondary Substitute: '{sub2['name']}' (Barcode: {sub2['barcode']}, Score: {sub2['score']:.1f})")
             
-        if sub2:
-            source_str = "Fallback" if is_fallback else "AI"
-            print(f"  👉 Secondary Substitute ({source_str}): '{sub2['name']}' (Barcode: {sub2['barcode']})")
-            substitutes_to_insert.append((barcode, sub2['barcode'], 2))
+            substitutes_to_insert.append((
+                barcode, 
+                sub1['barcode'] if sub1 else None, 
+                sub2['barcode'] if sub2 else None
+            ))
         else:
-            print("  ❌ Secondary Substitute: No suitable match found.")
+            # Log skipped products only when processing a limited batch to avoid flooding stdout
+            if RUN_LIMIT is not None:
+                print(f"\n[{idx}/{len(barcodes_to_run)}] Original: '{product['name']}'")
+                print("  ❌ No suitable substitutes found (left empty).")
 
-        time.sleep(1.0) # Rate limit Gemini calls nicely
+        if USE_GEMINI:
+            time.sleep(1.0) # Rate limit Gemini calls nicely
 
     # 3. Save to database
     if substitutes_to_insert:
         print(f"\n💾 Saving {len(substitutes_to_insert)} substitutes to database...")
         try:
-            for orig_barcode, sub_barcode, priority in substitutes_to_insert:
-                cursor.execute(
-                    """
-                    INSERT INTO substitutes (original_barcode, substitute_barcode, priority)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (original_barcode, priority) DO UPDATE SET
-                        substitute_barcode = EXCLUDED.substitute_barcode,
+            batch_size = 200
+            for i in range(0, len(substitutes_to_insert), batch_size):
+                batch = substitutes_to_insert[i:i+batch_size]
+                placeholders = ",".join(["(%s, %s, %s)"] * len(batch))
+                query = f"""
+                    INSERT INTO substitutes (original_barcode, substitute_barcode_1, substitute_barcode_2)
+                    VALUES {placeholders}
+                    ON CONFLICT (original_barcode) DO UPDATE SET
+                        substitute_barcode_1 = EXCLUDED.substitute_barcode_1,
+                        substitute_barcode_2 = EXCLUDED.substitute_barcode_2,
                         created_at = now()
-                    """,
-                    (orig_barcode, sub_barcode, priority)
-                )
+                """
+                params = [val for row in batch for val in row]
+                cursor.execute(query, params)
             conn.commit()
             print("Success: Successfully saved substitutes to database!")
         except Exception as e:
