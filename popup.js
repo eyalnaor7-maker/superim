@@ -1972,7 +1972,8 @@ async function compareCarts() {
                     substitute: substituteData,
                     rl_live_total: rl_live_total,
                     v_live_total: v_live_total,
-                    mck_live_total: mck_live_total
+                    mck_live_total: mck_live_total,
+                    substitutes: dbItem.substitutes || []
                 });
 
                 if (activeStore !== 'ramiLevy' && dbItem.rami_levy_code) {
@@ -2104,7 +2105,7 @@ async function compareCarts() {
                 isRamiMissing,
                 isVictoryMissing,
                 isMCKMissing,
-                substitutes: dbItem.substitutes || []
+                substitutes: item.substitutes || []
             };
 
             if (isRamiMissing || isVictoryMissing || isMCKMissing) {
