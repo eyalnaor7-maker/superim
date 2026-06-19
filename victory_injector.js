@@ -20,26 +20,66 @@ async function transferCartToVictory(cartItems) {
     let token = '';
     let branchId = null;
 
-    try {
-        const frontendData = localStorage.getItem('frontend');
-        if (frontendData) {
-            const parsed = JSON.parse(frontendData);
-            token = parsed.session?.token || parsed.token;
-            branchId = parsed.branchId;
-        }
-    } catch (e) {
-        console.error("שגיאה בקריאת נתוני משתמש:", e);
+    // Search token and branchId in localStorage (same as Machsanei Hashuk - Stor.ai platform)
+    for (const key of Object.keys(localStorage)) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw || raw.length < 4) continue;
+
+            // Direct token as hex string
+            if (/^[0-9a-f]{60,}$/.test(raw.trim())) {
+                token = raw.trim();
+                continue;
+            }
+
+            const p = JSON.parse(raw);
+            if (typeof p !== 'object' || !p) continue;
+
+            // Search token
+            const t = p?.token || p?.authToken || p?.access_token || p?.user?.token
+                    || p?.accessToken || p?.auth?.token || p?.session?.token;
+            if (t && typeof t === 'string' && t.length > 40) token = t;
+
+            // Search branchId
+            const bid = p?.branchId || p?.branch?.id || p?.selectedBranch?.id
+                      || p?.currentBranch?.id || p?.store?.branchId;
+            if (bid && !branchId) branchId = Number(bid);
+
+        } catch (e) {}
     }
 
-    if (!token || !branchId) {
+    if (!token) {
         updateVictoryStatus('❌ שגיאה: לא הצלחתי למצוא משתמש מחובר. אנא התחבר לאתר ויקטורי.');
+        return;
+    }
+
+    if (!branchId) {
+        // Attempt to discover branchId via API
+        const headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json;charset=UTF-8',
+            'Authorization': 'Bearer ' + token
+        };
+        try {
+            const r = await fetch(`/v2/retailers/${VICTORY_RETAILER_ID}/users/me?appId=${VICTORY_APP_ID}`, {
+                headers, credentials: 'include'
+            });
+            if (r.ok) {
+                const d = await r.json();
+                branchId = d?.branchId || d?.selectedBranchId || d?.branch?.id || d?.user?.branchId;
+            }
+        } catch(e) {}
+    }
+
+    if (!branchId) {
+        updateVictoryStatus('❌ שגיאה: לא הצלחתי למצוא סניף. אנא בחר סניף באתר ויקטורי.');
         return;
     }
 
     const headers = {
         "accept": "application/json, text/plain, */*",
         "content-type": "application/json;charset=UTF-8",
-        "Authorization": token.includes('Bearer') ? token : 'Bearer ' + token
+        "Authorization": 'Bearer ' + token
     };
 
     updateVictoryStatus('🚀 מכין את המוצרים להעברה...');
@@ -48,7 +88,7 @@ async function transferCartToVictory(cartItems) {
     let successCount = 0;
 
     for (const item of cartItems) {
-        const internalCode = item.victory_code || item.retailerProductId;
+        const internalCode = item.victory_code || item.victory_retailer_id || item.retailerProductId;
 
         if (internalCode) {
             linesPayload.push({
@@ -79,11 +119,11 @@ async function transferCartToVictory(cartItems) {
         const addResponse = await fetch(addUrl, {
             method: 'POST',
             headers: headers,
+            credentials: 'include',
             body: JSON.stringify(payload)
         });
 
         if (addResponse.ok || addResponse.status === 201) {
-            // החזרנו את הודעת ההצלחה ואת הרענון האוטומטי אחרי 2 שניות!
             updateVictoryStatus(`🎉 מדהים! ${successCount} מוצרים הועברו לעגלה שלך! מרענן...`);
             setTimeout(() => window.location.reload(), 2000);
         } else {
