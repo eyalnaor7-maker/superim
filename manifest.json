@@ -16,6 +16,7 @@
     "*://*.rami-levy.co.il/*",
     "*://*.victoryonline.co.il/*",
     "*://*.victory.co.il/*",
+    "*://*.shufersal.co.il/*",
     "*://*.mck.co.il/*",
     "*://firestore.googleapis.com/*",
     "*://generativelanguage.googleapis.com/*",
@@ -39,6 +40,10 @@
     {
       "matches": ["*://*.mck.co.il/*"],
       "js": ["shuk_injector.js"]
+    },
+    {
+      "matches": ["*://*.shufersal.co.il/*"],
+      "js": ["shufersal_injector.js"]
     }
   ]
 }

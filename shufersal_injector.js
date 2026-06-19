@@ -2,14 +2,20 @@
 // Content script that runs on shufersal.co.il pages.
 // Picks up a savedCartShufersal from chrome.storage and transfers the items.
 
-window.addEventListener('load', function () {
+function initShufersal() {
     chrome.storage.local.get(['savedCartShufersal'], function (result) {
         if (result.savedCartShufersal && result.savedCartShufersal.length > 0) {
             chrome.storage.local.remove(['savedCartShufersal']);
             transferCartToShufersal(result.savedCartShufersal);
         }
     });
-});
+}
+
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    initShufersal();
+} else {
+    window.addEventListener('load', initShufersal);
+}
 
 async function transferCartToShufersal(cartItems) {
     createShufersalStatusWindow();
@@ -20,10 +26,15 @@ async function transferCartToShufersal(cartItems) {
     if (metaTag) csrfToken = metaTag.getAttribute('content');
 
     if (!csrfToken) {
+        const inputTag = document.querySelector('input[name="CSRFToken"]');
+        if (inputTag) csrfToken = inputTag.value;
+    }
+
+    if (!csrfToken) {
         const cookies = document.cookie.split(';');
         for (const c of cookies) {
             const [k, v] = c.trim().split('=');
-            if (k === 'CSRF-TOKEN' || k === 'csrfToken') {
+            if (k.toLowerCase().includes('csrf')) {
                 csrfToken = decodeURIComponent(v);
                 break;
             }
