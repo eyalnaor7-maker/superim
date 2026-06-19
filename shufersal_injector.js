@@ -41,19 +41,39 @@ async function transferCartToShufersal(cartItems) {
         }
     }
 
+    if (!csrfToken) {
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+            const match = script.textContent.match(/CSRFToken\s*:\s*['"]([^'"]+)['"]/);
+            if (match) {
+                csrfToken = match[1];
+                break;
+            }
+        }
+    }
+
+    console.log("Shufersal Injector: Detected CSRF Token:", csrfToken);
+    console.log("Shufersal Injector: Items to transfer:", cartItems);
+
     const headers = {
         'Accept': 'application/json, text/plain, */*',
-        // שים לב לשינוי כאן - השתמשנו בפורמט שגילית!
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
     };
-    if (csrfToken) headers['CSRFToken'] = csrfToken;
+    if (csrfToken) {
+        headers['CSRFToken'] = csrfToken;
+        headers['X-CSRF-Token'] = csrfToken;
+        headers['X-Csrf-Token'] = csrfToken;
+    }
 
     updateShufersalStatus(`מעביר ${cartItems.length} מוצרים לעגלה...`);
 
     let successCount = 0;
 
     for (const item of cartItems) {
-        if (!item.shufersal_code) continue;
+        if (!item.shufersal_code) {
+            console.warn("Shufersal Injector: Skipped item due to missing shufersal_code:", item);
+            continue;
+        }
         const code = item.shufersal_code.startsWith('P_') ? item.shufersal_code : 'P_' + item.shufersal_code;
 
         // בניית החבילה המדויקת שגילית בשטח!
@@ -67,9 +87,12 @@ async function transferCartToShufersal(cartItems) {
         formData.append('comment', '');
         formData.append('frontQuantity', item.quantity || 1);
         formData.append('qty', item.quantity || 1);
+        if (csrfToken) {
+            formData.append('CSRFToken', csrfToken);
+        }
 
         try {
-            // הוספת המוצר דרך הנתיב הסטנדרטי של שופרסל
+            console.log(`Shufersal Injector: Sending addEntry for ${code} with quantity ${item.quantity || 1}`);
             const resp = await fetch('/online/he/cart/addEntry', {
                 method: 'POST',
                 headers,
@@ -77,11 +100,15 @@ async function transferCartToShufersal(cartItems) {
                 body: formData.toString()
             });
 
+            console.log(`Shufersal Injector: Response for ${code}: status = ${resp.status}`);
             if (resp.ok) {
                 successCount++;
+            } else {
+                const text = await resp.text();
+                console.warn(`Shufersal Injector: Failed response for ${code}:`, text.substring(0, 300));
             }
         } catch (e) {
-            console.error('Failed to add to Shufersal', code, e);
+            console.error('Shufersal Injector: Failed to add to Shufersal', code, e);
         }
     }
 
