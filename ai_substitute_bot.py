@@ -70,7 +70,7 @@ def ask_ai_for_substitute(original_name, candidates, original_code):
     for attempt in range(3):
         try:
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-1.5-pro',
                 contents=prompt
             )
             choice = int(response.text.strip())

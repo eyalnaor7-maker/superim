@@ -15,11 +15,13 @@
   "host_permissions": [
     "*://*.rami-levy.co.il/*",
     "*://*.victoryonline.co.il/*",
-    "*://firestore.googleapis.com/*"
+    "*://*.mck.co.il/*",
+    "*://firestore.googleapis.com/*",
+    "*://generativelanguage.googleapis.com/*"
   ],
   "web_accessible_resources": [
     {
-      "resources": ["prices.json", "substitutes.json"],
+      "resources": ["prices.json", "substitutes.json", "config.json"],
       "matches": ["<all_urls>"]
     }
   ],
@@ -31,6 +33,10 @@
     {
       "matches": ["*://*.victoryonline.co.il/*"],
       "js": ["victory_injector.js"]
+    },
+    {
+      "matches": ["*://*.mck.co.il/*"],
+      "js": ["shuk_injector.js"]
     }
   ]
 }

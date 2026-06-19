@@ -6,29 +6,78 @@ const formatPrice = amount => `₪${parseFloat(amount || 0).toFixed(2)}`;
 
 const STOP_WORDS = new Set(['גרם', 'מ"ל', 'מל', 'ליטר', 'ק"ג', 'קג', 'יח', 'יחידות', 'של', 'עם', 'בלי', 'ו', 'ב', 'ל', 'מ', 'פרוס', 'טרי', 'קפוא']);
 
-function findSubstitute(productName, pricesData) {
-    const allTokens = [
-        ...productName.split(/[\s\-\/,.'"%*]+/).map(w => w.trim()).filter(w => w.length > 1 && !STOP_WORDS.has(w) && !/^\d+$/.test(w)),
-        ...(productName.match(/\d+\.?\d*/g) || []).filter(n => n.length > 1)
-    ];
+const BRAND_WORDS = new Set(['שופרסל', 'רמי לוי', 'ויקטורי', 'מיה', 'אסם', 'עלית', 'תלמה', 'טרה', 'תנובה', 'שטראוס', 'יטבתה', 'סוגת', 'וילי פוד', 'מאסטר שף', 'פריגת']);
 
-    let bestMatch = null;
-    let bestScore = 0;
+function extractWeight(name) {
+    const match = name.match(/(\d+\.?\d*)\s*(גרם|מ"ל|מל|ליטר|ק"ג|קג)/i);
+    if (!match) return null;
+    let value = parseFloat(match[1]);
+    let unit = match[2].replace('"', '').toLowerCase();
+    if (unit === 'קג' || unit === 'ק"ג') { value *= 1000; unit = 'גרם'; }
+    if (unit === 'ליטר') { value *= 1000; unit = 'מל'; }
+    return { value, unit };
+}
+
+function findCandidatesFromDB(productName, pricesData, targetStore) {
+    const words = productName.split(/[\s\-\/,.'"%*]+/).map(w => w.trim()).filter(w => w.length > 1);
+    const coreTokens = words.filter(w => !STOP_WORDS.has(w) && !BRAND_WORDS.has(w) && !/^\d+$/.test(w));
+
+    const codeField = targetStore === 'victory' ? 'victory_code' : 'rami_levy_code';
+    const priceField = targetStore === 'victory' ? 'victory_price' : 'rami_levy_price';
+
+    let candidates = [];
+    const requiredScore = Math.max(1, Math.min(2, coreTokens.length));
+    const isOriginalCouscous = productName.includes('קוסקוס');
 
     for (const [, item] of Object.entries(pricesData)) {
-        if (!item.rami_levy_code) continue;
+        if (!item[codeField]) continue;
         if (item.name === productName) continue;
+        
+        // Strict filter to avoid bringing couscous if the user didn't ask for it
+        if (!isOriginalCouscous && item.name.includes('קוסקוס')) continue;
 
         let score = 0;
-        for (const token of allTokens) {
+        for (const token of coreTokens) {
             if (item.name.includes(token)) score++;
         }
-        if (score > bestScore && score >= 2) {
-            bestScore = score;
-            bestMatch = { code: item.rami_levy_code, name: item.name, price: item.rami_levy_price || 0 };
+        if (score >= requiredScore) {
+            candidates.push({
+                code: String(item[codeField]),
+                name: item.name,
+                price: item[priceField] || 0,
+                score
+            });
         }
     }
-    return bestMatch;
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates.slice(0, 8);
+}
+
+function findSubstitute(productName, pricesData, targetStore = 'rami_levy') {
+    const candidates = findCandidatesFromDB(productName, pricesData, targetStore);
+    if (candidates.length > 0) {
+        const best = candidates[0];
+        const sourceWeight = extractWeight(productName);
+        let suggestedQty = 1;
+        if (sourceWeight) {
+            const subWeight = extractWeight(best.name);
+            if (subWeight && subWeight.unit === sourceWeight.unit && subWeight.value > 0) {
+                suggestedQty = Math.max(1, Math.round(sourceWeight.value / subWeight.value));
+            }
+        }
+        return { ...best, suggestedQty };
+    }
+    return null;
+}
+
+function findProductByName(searchName, pricesData) {
+    const query = extractSearchQuery(searchName);
+    for (const [key, item] of Object.entries(pricesData)) {
+        const dbQuery = extractSearchQuery(item.name);
+        if (query === dbQuery) return { key, item };
+    }
+    return null;
 }
 
 const STORE_SYNONYMS = [
@@ -46,6 +95,108 @@ function extractSearchQuery(name) {
         .replace(/\d+\.?\d*\s*(גרם|מ"ל|מל|ליטר|ק"ג|קג|יח'?)/gi, '')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+// ===== AI SUBSTITUTE ENGINE (Gemini) =====
+let GEMINI_API_KEY = ''; 
+const GEMINI_MODEL = 'gemini-2.0-flash-lite';
+let substitutionLog = [];
+
+try {
+    fetch(chrome.runtime.getURL('config.json'))
+        .then(r => r.json())
+        .then(cfg => { GEMINI_API_KEY = cfg.gemini_api_key || ''; })
+        .catch(() => {});
+} catch(e) {}
+
+async function aiPickBestMatch(originalName, candidates) {
+    if (!GEMINI_API_KEY || candidates.length === 0) return null;
+
+    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+    const prompt = `אתה עוזר להתאים מוצרי סופרמרקט. בהינתן מוצר מקורי ורשימת מוצרים מסופר אחר, בחר את התחליף הכי מתאים.
+
+כללים חשובים:
+- התחליף חייב להיות אותו סוג מוצר בדיוק (פתיתים=פתיתים, תירס שימורים=תירס שימורים)
+- מותג שונה זה בסדר בתנאי שהסוג זהה
+- עדיף אותו גודל/משקל
+- קוסקוס זה לא פתיתים! אטריות זה לא אורז!
+- החזר רק מספר אחד (1-${candidates.length}), או 0 אם אין התאמה מספיק טובה
+
+מוצר מקורי: "${originalName}"
+
+מוצרים זמינים:
+${candidateList}
+
+מספר:`;
+
+    try {
+        const resp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.1, maxOutputTokens: 5 }
+                })
+            }
+        );
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+        const num = parseInt(text.replace(/[^\d]/g, ''));
+        if (num > 0 && num <= candidates.length) return candidates[num - 1];
+    } catch(e) {
+        console.warn('AI error:', e);
+    }
+    return null;
+}
+
+async function smartSearchRamiLevy(productName, excludeCode = null) {
+    let cleanName = productName;
+    for (const brand of BRAND_WORDS) {
+        cleanName = cleanName.replace(new RegExp(brand, 'gi'), '');
+    }
+    cleanName = cleanName.replace(/\s+/g, ' ').trim();
+
+    try {
+        const resp = await fetch('https://www.rami-levy.co.il/api/catalog', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json;charset=UTF-8'
+            },
+            body: JSON.stringify({ q: cleanName, store: 331 })
+        });
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        if (!data.data || data.data.length === 0) return null;
+
+        const candidates = data.data
+            .filter(p => String(p.id) !== excludeCode)
+            .slice(0, 8)
+            .map(p => ({ code: String(p.id), name: p.name, price: p.price?.price || 0 }));
+
+        if (candidates.length === 0) return null;
+
+        const aiPick = await aiPickBestMatch(productName, candidates);
+        if (aiPick) return aiPick;
+
+        return candidates[0];
+    } catch(e) {}
+    return null;
+}
+
+async function smartSearchVictory(productName, pricesData) {
+    const candidates = findCandidatesFromDB(productName, pricesData, 'victory');
+    if (candidates.length === 0) return null;
+    const aiPick = await aiPickBestMatch(productName, candidates);
+    if (aiPick) return aiPick;
+    return candidates[0];
+}
+
+function logSubstitution(original, substitute, store, reason) {
+    substitutionLog.push({ original, substitute, store, reason });
 }
 
 // ===== CHROME HELPERS =====
@@ -349,10 +500,8 @@ async function agentVictoryAgent(items) {
     if (branchId) {
         const searchBase = `/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/products/autocomplete`;
         for (const item of items) {
-            if (item.retailerProductId) {
-                foundIds.set(item.barcode, { retailerProductId: Number(item.retailerProductId), price: 0, quantity: item.quantity });
-                continue;
-            }
+            // Store known ID as fallback but ALWAYS do a live lookup to get current price + verify product
+            const knownRetailerId = item.retailerProductId ? Number(item.retailerProductId) : null;
 
             let matched = false;
             for (const q of [item.barcode, item.name]) {
@@ -411,6 +560,10 @@ async function agentVictoryAgent(items) {
                         matched = true;
                     }
                 } catch(e) {}
+            }
+            // Fallback: if live search found nothing but we have a stored ID, use it
+            if (!matched && knownRetailerId) {
+                foundIds.set(item.barcode, { retailerProductId: knownRetailerId, price: 0, quantity: item.quantity, outOfStock: false });
             }
         }
     }
@@ -688,6 +841,7 @@ async function compareCarts() {
                     shufersal_code: shufersalCode,
                     shufersal_total: s_total,
                     backup_target_code: String(dbItem.rami_levy_code),
+                    victory_code: dbItem.victory_code || null,
                     victory_retailer_id: dbItem.victory_retailer_id || null,
                     victory_price_unit: dbItem.victory_price != null ? dbItem.victory_price : null,
                     substitute: substituteData,
@@ -750,7 +904,7 @@ async function compareCarts() {
                 ramiTotal = item.rl_live_total;
             } else {
                 const liveData = ramiLevyResults.find(r => r.id === item.backup_target_code);
-                ramiTotal = liveData ? liveData.finalTotal : (compareRamiLevy ? 0 : null);
+                ramiTotal = liveData ? liveData.finalTotal : null;
             }
 
             const barcode = item.shufersal_code.replace('P_', '');
@@ -759,59 +913,112 @@ async function compareCarts() {
                 ? (victoryLive.outOfStock ? null : victoryLive.finalTotal)
                 : (item.victory_price_unit != null ? item.victory_price_unit * item.quantity : null);
 
+            const isRamiMissing = compareRamiLevy && (!ramiTotal || ramiTotal <= 0) && activeStore !== 'ramiLevy';
+            const isVictoryMissing = compareVictory && (!victoryTotal || victoryTotal <= 0) && activeStore !== 'victory';
+
             const obj = {
                 name: item.name,
                 quantity: item.quantity,
                 shufersal_code: item.shufersal_code,
                 targetCode: item.backup_target_code,
+                victory_code: item.victory_code || item.victory_retailer_id,
+                victory_retailer_id: item.victory_retailer_id || item.victory_code,
                 shufersal_total: item.shufersal_total,
                 rami_levy_total: compareRamiLevy ? (ramiTotal || 0) : null,
                 victory_total: compareVictory ? victoryTotal : null,
-                substitute: item.substitute
+                isRamiMissing,
+                isVictoryMissing
             };
 
-            if (!compareRamiLevy || ramiTotal > 0 || activeStore === 'ramiLevy') {
-                inStockItems.push(obj);
-            } else {
+            if (isRamiMissing || isVictoryMissing) {
                 outOfStockItems.push(obj);
-                itemsToDeleteCodes.add(item.backup_target_code);
+                if (isRamiMissing) itemsToDeleteCodes.add(item.backup_target_code);
+            } else {
+                inStockItems.push(obj);
             }
         });
 
-        // 7. Search substitutes
-        if (outOfStockItems.length > 0 && compareRamiLevy) {
-            statusDiv.innerHTML = 'מחפש תחליפים...';
-            await Promise.all(outOfStockItems.map(async outItem => {
-                if (outItem.substitute) return;
-                const barcode = outItem.shufersal_code.replace('P_', '');
-                if (substitutesData[barcode]) {
-                    outItem.substitute = substitutesData[barcode]; return;
+        // 7. AI-powered automatic substitute resolution
+        statusDiv.innerHTML = '🧠 AI מנתח ומתאים תחליפים...';
+
+        const resolveItem = async (item, isMissing) => {
+            // Rami Levy
+            if (compareRamiLevy && (item.isRamiMissing || isMissing)) {
+                let sub = await smartSearchRamiLevy(item.name, item.targetCode);
+                if (!sub) sub = findSubstitute(item.name, pricesData, 'rami_levy');
+                if (sub) {
+                    if (!sub.suggestedQty) {
+                        const srcW = extractWeight(item.name);
+                        const subW = extractWeight(sub.name);
+                        if (srcW && subW && srcW.unit === subW.unit && subW.value > 0) {
+                            sub.suggestedQty = Math.max(1, Math.round(srcW.value / subW.value));
+                        }
+                    }
+                    logSubstitution(item.name, sub.name, 'רמי לוי', isMissing ? 'לא במאגר' : 'חסר במלאי');
+                    const subQty = (sub.suggestedQty || 1) * item.quantity;
+                    item.rami_levy_total = sub.price * subQty;
+                    item.targetCode = sub.code;
+                    item.isRamiMissing = false;
                 }
-                const query = extractSearchQuery(outItem.name);
-                outItem.substitute = await searchRamiLevyCatalog(query, outItem.targetCode);
-                if (!outItem.substitute) outItem.substitute = findSubstitute(outItem.name, pricesData);
-            }));
+            }
+            
+            // Victory
+            if (compareVictory && (item.isVictoryMissing || isMissing)) {
+                let sub = await smartSearchVictory(item.name, pricesData);
+                if (!sub) sub = findSubstitute(item.name, pricesData, 'victory');
+                if (sub) {
+                    if (!sub.suggestedQty) {
+                        const srcW = extractWeight(item.name);
+                        const subW = extractWeight(sub.name);
+                        if (srcW && subW && srcW.unit === subW.unit && subW.value > 0) {
+                            sub.suggestedQty = Math.max(1, Math.round(srcW.value / subW.value));
+                        }
+                    }
+                    logSubstitution(item.name, sub.name, 'ויקטורי', isMissing ? 'לא במאגר' : 'חסר במלאי');
+                    const subQty = (sub.suggestedQty || 1) * item.quantity;
+                    item.victory_total = sub.price * subQty;
+                    item.victory_code = sub.code;
+                    item.victory_retailer_id = sub.code;
+                    item.isVictoryMissing = false;
+                }
+            }
+        };
+
+        for (let i = outOfStockItems.length - 1; i >= 0; i--) {
+            const item = outOfStockItems[i];
+            await resolveItem(item, false);
+            
+            const rOk = !compareRamiLevy || !item.isRamiMissing;
+            const vOk = !compareVictory || !item.isVictoryMissing;
+            if (rOk && vOk) {
+                inStockItems.push(item);
+                outOfStockItems.splice(i, 1);
+            }
         }
 
-        // 8. Substitute click handler
-        resultDiv.addEventListener('click', e => {
-            const btn = e.target.closest('.sub-btn');
-            if (!btn) return;
-            const idx = parseInt(btn.getAttribute('data-index'));
-            const item = outOfStockItems[idx];
-            if (!item) return;
-            outOfStockItems.splice(idx, 1);
-            inStockItems.push({
-                name: '🔄 ' + item.substitute.name,
-                quantity: item.quantity,
-                shufersal_code: item.shufersal_code,
-                targetCode: item.substitute.code,
-                shufersal_total: item.shufersal_total,
-                rami_levy_total: item.substitute.price * item.quantity,
-                victory_total: null
-            });
-            renderUI();
-        });
+        for (let i = missingItems.length - 1; i >= 0; i--) {
+            const item = missingItems[i];
+            item.isRamiMissing = true;
+            item.isVictoryMissing = true;
+            await resolveItem(item, true);
+            
+            const rOk = !compareRamiLevy || !item.isRamiMissing;
+            const vOk = !compareVictory || !item.isVictoryMissing;
+            if (rOk && vOk) {
+                inStockItems.push({
+                    name: item.name,
+                    quantity: item.quantity,
+                    shufersal_code: item.code || item.shufersal_code || '',
+                    targetCode: item.targetCode,
+                    victory_code: item.victory_code,
+                    victory_retailer_id: item.victory_retailer_id || item.victory_code,
+                    shufersal_total: item.shufersal_total || 0,
+                    rami_levy_total: item.rami_levy_total || null,
+                    victory_total: item.victory_total || null
+                });
+                missingItems.splice(i, 1);
+            }
+        }
 
         renderUI();
 
@@ -942,23 +1149,39 @@ async function compareCarts() {
                 html += '</div>';
             }
 
+            if (substitutionLog.length > 0) {
+                html += `
+                <div class="details-section" style="margin-top:8px;">
+                    <button class="details-toggle" id="subLogToggle">
+                        <span>📝 פירוט החלפות חכמות (${substitutionLog.length})</span>
+                        <span class="toggle-arrow" id="subLogArrow">▼</span>
+                    </button>
+                    <div class="details-content" id="subLogContent">
+                        <div class="out-section">`;
+                substitutionLog.forEach(log => {
+                    html += `
+                        <div class="out-item" style="border-right: 3px solid #2e7d32;">
+                            <div class="out-item-name" style="text-decoration: line-through; color: #6b7280;">${log.original}</div>
+                            <div class="out-item-sub" style="color: #2e7d32; font-weight: bold;">🔄 הוחלף ב: ${log.substitute}</div>
+                            <div style="font-size: 11px; color: #9ca3af; margin-top: 4px;">סופר: ${log.store} (${log.reason})</div>
+                        </div>`;
+                });
+                html += `       </div>
+                    </div>
+                </div>`;
+            }
+
             if (outOfStockItems.length > 0) {
-                html += '<div class="section-label">חסר במלאי רמי לוי</div><div class="out-section">';
-                outOfStockItems.forEach((item, idx) => {
+                html += '<div class="section-label">חסר במלאי לחלוטין</div><div class="out-section">';
+                outOfStockItems.forEach((item) => {
                     html += `<div class="out-item"><div class="out-item-name">${item.name} x${item.quantity}</div>`;
-                    if (item.substitute) {
-                        html += `<div class="out-item-sub">
-                            <button class="sub-btn" data-index="${idx}">
-                                החלף ל: ${item.substitute.name} (${formatPrice(item.substitute.price * item.quantity)})
-                            </button></div>`;
-                    }
-                    html += '</div>';
+                    html += `<div class="out-item-sub"><span style="color:#9ca3af; font-size:12px;">לא נמצא תחליף מתאים ב-${item.isRamiMissing ? 'רמי לוי' : ''} ${item.isVictoryMissing ? 'ויקטורי' : ''}</span></div></div>`;
                 });
                 html += '</div>';
             }
 
             if (missingItems.length > 0) {
-                html += '<div class="section-label">לא במאגר התוסף</div><div class="missing-section">';
+                html += '<div class="section-label">לא נמצא במאגר לחלוטין</div><div class="missing-section">';
                 missingItems.forEach(item => {
                     html += `<div class="missing-item">❌ ${item.name} x${item.quantity}</div>`;
                 });
@@ -992,6 +1215,11 @@ async function compareCarts() {
                 document.getElementById('toggleArrow').classList.toggle('open');
             });
 
+            document.getElementById('subLogToggle')?.addEventListener('click', () => {
+                document.getElementById('subLogContent').classList.toggle('open');
+                document.getElementById('subLogArrow').classList.toggle('open');
+            });
+
             document.getElementById('switchToRamiLevy')?.addEventListener('click', () => {
                 chrome.storage.local.set({ savedCart: finalCartToTransfer }, () => {
                     chrome.tabs.create({ url: 'https://www.rami-levy.co.il/he' });
@@ -1000,25 +1228,13 @@ async function compareCarts() {
 
             document.getElementById('switchToVictory')?.addEventListener('click', () => {
                 const victoryCart = finalCartToTransfer.filter(i => i.quantity > 0).map(i => {
-                    const dbKey = i.shufersal_code.startsWith('P_') ? i.shufersal_code : 'P_' + i.shufersal_code;
-                    let dbItem = pricesData[dbKey];
                     const cleanBarcode = i.shufersal_code.replace('P_', '');
-
-                    // --- התוספת החכמה שלנו: חיפוש גמיש שמתעלם מהאפסים ---
-                    if (!dbItem) {
-                        const matchingKey = Object.keys(pricesData).find(k => k.endsWith(cleanBarcode));
-                        if (matchingKey) {
-                            dbItem = pricesData[matchingKey];
-                        }
-                    }
-                    // --------------------------------------------------
-
                     return {
                         name: i.name, amount: i.quantity, quantity: i.quantity,
                         shufersal_code: i.shufersal_code,
                         barcode: cleanBarcode,
-                        victory_code: dbItem ? dbItem.victory_code : null,
-                        victory_retailer_id: dbItem ? dbItem.victory_retailer_id : null
+                        victory_code: i.victory_code || null,
+                        victory_retailer_id: i.victory_retailer_id || null
                     };
                 });
                 chrome.storage.local.set({ savedCartVictory: victoryCart }, () => {

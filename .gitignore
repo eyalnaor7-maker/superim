@@ -86,3 +86,6 @@ node_modules/
 # OS files
 desktop.ini
 Thumbs.db
+
+# API keys (NEVER push to GitHub!)
+config.json
