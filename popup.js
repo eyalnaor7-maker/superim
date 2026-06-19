@@ -316,9 +316,7 @@ function findShufersalDataByRamiLevy(ramiLevyCode, pricesData) {
                 shufersal_price: itemData.shufersal_price,
                 victory_price: itemData.victory_price,
                 victory_retailer_id: itemData.victory_retailer_id,
-                substitute_code: itemData.substitute_code,
-                substitute_name: itemData.substitute_name,
-                substitute_price: itemData.substitute_price
+                substitutes: itemData.substitutes || []
             };
         }
     }
@@ -802,13 +800,29 @@ async function compareCarts() {
         if (activeStore === 'shufersal') {
             const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
             const queryParams = new URLSearchParams({
-                select: 'barcode,name,store_products(store_name,store_code,price),substitutes(substitute_code,substitute_name,store_name)',
+                select: 'barcode,name,store_products(store_name,store_code,price)',
                 barcode: `in.(${barcodesList.join(',')})`
             });
             try {
-                const res = await fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers });
-                if (!res.ok) throw new Error(`Supabase query failed: ${res.statusText}`);
-                const products = await res.json();
+                // Fetch products and substitutes in parallel
+                const fetchProducts = fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers }).then(r => r.ok ? r.json() : []);
+                
+                const subQueryParams = new URLSearchParams({
+                    original_barcode: `in.(${barcodesList.join(',')})`,
+                    order: 'priority.asc'
+                });
+                const fetchSubs = fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers }).then(r => r.ok ? r.json() : []);
+
+                const [products, subsList] = await Promise.all([fetchProducts, fetchSubs]);
+
+                const substitutesMap = {};
+                subsList.forEach(s => {
+                    if (!substitutesMap[s.original_barcode]) {
+                        substitutesMap[s.original_barcode] = [];
+                    }
+                    substitutesMap[s.original_barcode].push(s);
+                });
+
                 products.forEach(p => {
                     const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
                     const itemData = {
@@ -817,7 +831,8 @@ async function compareCarts() {
                         rami_levy_price: null,
                         rami_levy_code: null,
                         victory_code: null,
-                        victory_price: null
+                        victory_price: null,
+                        substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
                     };
                     if (p.store_products) {
                         p.store_products.forEach(sp => {
@@ -828,13 +843,6 @@ async function compareCarts() {
                             }
                         });
                     }
-                    if (p.substitutes) {
-                        const sub = p.substitutes.find(s => s.store_name === 'rami_levy');
-                        if (sub) {
-                            itemData.substitute_code = sub.substitute_code;
-                            itemData.substitute_name = sub.substitute_name;
-                        }
-                    }
                     pricesData[xmlKey] = itemData;
                 });
             } catch (err) {
@@ -842,7 +850,7 @@ async function compareCarts() {
             }
         } else if (activeStore === 'ramiLevy') {
             const queryParams = new URLSearchParams({
-                select: 'store_code,products(barcode,name,store_products(store_name,store_code,price),substitutes(substitute_code,substitute_name,store_name))',
+                select: 'store_code,products(barcode,name,store_products(store_name,store_code,price))',
                 store_name: 'eq.rami_levy',
                 store_code: `in.(${codes.join(',')})`
             });
@@ -850,6 +858,30 @@ async function compareCarts() {
                 const res = await fetch(`${SUPABASE_URL}/rest/v1/store_products?${queryParams}`, { headers });
                 if (!res.ok) throw new Error(`Supabase query failed: ${res.statusText}`);
                 const storeProducts = await res.json();
+
+                const barcodesList = storeProducts.map(sp => sp.products?.barcode).filter(Boolean);
+                let substitutesMap = {};
+                if (barcodesList.length > 0) {
+                    try {
+                        const subQueryParams = new URLSearchParams({
+                            original_barcode: `in.(${barcodesList.join(',')})`,
+                            order: 'priority.asc'
+                        });
+                        const subRes = await fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers });
+                        if (subRes.ok) {
+                            const subs = await subRes.json();
+                            subs.forEach(s => {
+                                if (!substitutesMap[s.original_barcode]) {
+                                    substitutesMap[s.original_barcode] = [];
+                                }
+                                substitutesMap[s.original_barcode].push(s);
+                            });
+                        }
+                    } catch (err) {
+                        console.error("שגיאה בטעינת תחליפים מ-Supabase:", err);
+                    }
+                }
+
                 storeProducts.forEach(sp => {
                     const p = sp.products;
                     if (!p) return;
@@ -860,7 +892,8 @@ async function compareCarts() {
                         rami_levy_price: null,
                         rami_levy_code: null,
                         victory_code: null,
-                        victory_price: null
+                        victory_price: null,
+                        substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
                     };
                     if (p.store_products) {
                         p.store_products.forEach(innerSp => {
@@ -870,13 +903,6 @@ async function compareCarts() {
                                 itemData.victory_retailer_id = innerSp.store_code;
                             }
                         });
-                    }
-                    if (p.substitutes) {
-                        const sub = p.substitutes.find(s => s.store_name === 'rami_levy');
-                        if (sub) {
-                            itemData.substitute_code = sub.substitute_code;
-                            itemData.substitute_name = sub.substitute_name;
-                        }
                     }
                     pricesData[xmlKey] = itemData;
                 });
@@ -915,9 +941,22 @@ async function compareCarts() {
             }
 
             if (dbItem && (dbItem.rami_levy_code || activeStore === 'ramiLevy')) {
-                const substituteData = dbItem.substitute_code ? {
-                    code: dbItem.substitute_code, name: dbItem.substitute_name, price: dbItem.substitute_price
-                } : null;
+                let substituteData = null;
+                if (dbItem.substitutes && dbItem.substitutes.length > 0) {
+                    const targetStore = compareRamiLevy ? 'rami_levy' : 'victory';
+                    for (const s of dbItem.substitutes) {
+                        const codeKey = `${targetStore}_code`;
+                        const priceKey = `${targetStore}_price`;
+                        if (s[codeKey] && s[priceKey] != null) {
+                            substituteData = {
+                                code: s[codeKey],
+                                name: s.substitute_name,
+                                price: parseFloat(s[priceKey])
+                            };
+                            break;
+                        }
+                    }
+                }
 
                 let s_total = activeStore === 'shufersal' ? item.shufersal_total : (dbItem.shufersal_price || 0) * item.quantity;
                 let rl_live_total = activeStore === 'ramiLevy' ? item.rami_levy_total : null;
@@ -1014,7 +1053,8 @@ async function compareCarts() {
                 rami_levy_total: compareRamiLevy ? (ramiTotal || 0) : null,
                 victory_total: compareVictory ? victoryTotal : null,
                 isRamiMissing,
-                isVictoryMissing
+                isVictoryMissing,
+                substitutes: dbItem.substitutes || []
             };
 
             if (isRamiMissing || isVictoryMissing) {
@@ -1031,8 +1071,26 @@ async function compareCarts() {
         const resolveItem = async (item, isMissing) => {
             // Rami Levy
             if (compareRamiLevy && (item.isRamiMissing || isMissing)) {
-                let sub = await smartSearchRamiLevy(item.name, item.targetCode);
+                let sub = null;
+                // Try pre-approved substitutes first
+                if (item.substitutes && item.substitutes.length > 0) {
+                    for (const s of item.substitutes) {
+                        if (s.rami_levy_code && s.rami_levy_price != null && s.rami_levy_price > 0) {
+                            sub = {
+                                code: s.rami_levy_code,
+                                name: s.substitute_name,
+                                price: parseFloat(s.rami_levy_price)
+                            };
+                            break;
+                        }
+                    }
+                }
+                
+                // If no pre-approved, try live search
+                if (!sub) sub = await smartSearchRamiLevy(item.name, item.targetCode);
+                // If still none, try DB similarity search
                 if (!sub) sub = await findSubstitute(item.name, 'rami_levy');
+                
                 if (sub) {
                     if (!sub.suggestedQty) {
                         const srcW = extractWeight(item.name);
@@ -1051,8 +1109,26 @@ async function compareCarts() {
             
             // Victory
             if (compareVictory && (item.isVictoryMissing || isMissing)) {
-                let sub = await smartSearchVictory(item.name);
+                let sub = null;
+                // Try pre-approved substitutes first
+                if (item.substitutes && item.substitutes.length > 0) {
+                    for (const s of item.substitutes) {
+                        if (s.victory_code && s.victory_price != null && s.victory_price > 0) {
+                            sub = {
+                                code: s.victory_code,
+                                name: s.substitute_name,
+                                price: parseFloat(s.victory_price)
+                            };
+                            break;
+                        }
+                    }
+                }
+                
+                // If no pre-approved, try live search
+                if (!sub) sub = await smartSearchVictory(item.name);
+                // If still none, try DB similarity search
                 if (!sub) sub = await findSubstitute(item.name, 'victory');
+                
                 if (sub) {
                     if (!sub.suggestedQty) {
                         const srcW = extractWeight(item.name);
