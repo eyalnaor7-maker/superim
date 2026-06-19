@@ -75,39 +75,48 @@ async function transferCartToShufersal(cartItems) {
     let successCount = 0;
     let urlStatuses = {};
 
-    const attemptsToTry = [
-        { url: '/online/he/cart/add', contentType: 'json' },
-        { url: '/online/he/cart/add/', contentType: 'json' },
-        { url: '/online/he/cart/add', contentType: 'form' },
-        { url: '/online/he/cart/add/', contentType: 'form' },
-        { url: '/online/he/cart/addEntry', contentType: 'form' },
-        { url: '/online/he/cart/addEntry/', contentType: 'form' },
-        { url: '/online/he/cart/addentry', contentType: 'form' },
-        { url: '/online/he/cart/addentry/', contentType: 'form' },
-        { url: '/he/cart/add', contentType: 'json' },
-        { url: '/he/cart/add/', contentType: 'json' },
-        { url: '/he/cart/add', contentType: 'form' },
-        { url: '/he/cart/add/', contentType: 'form' },
-        { url: '/he/cart/addEntry', contentType: 'form' },
-        { url: '/he/cart/addEntry/', contentType: 'form' },
-        { url: '/he/cart/addentry', contentType: 'form' },
-        { url: '/he/cart/addentry/', contentType: 'form' }
+    // Defined JSON payload structures
+    const getJsonPayloads = (code, qty) => [
+        { name: 'json-flat', body: { productCode: code, quantity: qty } },
+        { name: 'json-nested', body: { product: { code: code }, quantity: qty } },
+        { name: 'json-bulk-array', body: [{ productCode: code, quantity: qty }] },
+        { name: 'json-bulk-entries', body: { entries: [{ productCode: code, quantity: qty }] } },
+        { name: 'json-simple', body: { code: code, quantity: qty } },
+        { name: 'json-flat-qty', body: { productCode: code, qty: qty } }
+    ];
+
+    const targetUrls = [
+        '/online/he/cart/add',
+        '/online/he/cart/add/'
+    ];
+
+    const formEndpoints = [
+        '/online/he/cart/add',
+        '/online/he/cart/add/',
+        '/online/he/cart/addEntry',
+        '/online/he/cart/addEntry/',
+        '/online/he/cart/addentry',
+        '/online/he/cart/addentry/'
     ];
 
     const formTag = document.querySelector('form[action*="/cart/"]');
     if (formTag) {
         const actionUrl = formTag.getAttribute('action');
         if (actionUrl) {
-            attemptsToTry.unshift({ url: actionUrl, contentType: 'json' });
-            attemptsToTry.unshift({ url: actionUrl, contentType: 'form' });
-            if (!actionUrl.endsWith('/')) {
-                attemptsToTry.unshift({ url: actionUrl + '/', contentType: 'json' });
-                attemptsToTry.unshift({ url: actionUrl + '/', contentType: 'form' });
+            if (!targetUrls.includes(actionUrl)) {
+                targetUrls.unshift(actionUrl);
+                if (!actionUrl.endsWith('/')) {
+                    targetUrls.unshift(actionUrl + '/');
+                }
+            }
+            if (!formEndpoints.includes(actionUrl)) {
+                formEndpoints.unshift(actionUrl);
+                if (!actionUrl.endsWith('/')) {
+                    formEndpoints.unshift(actionUrl + '/');
+                }
             }
         }
     }
-
-    console.log("Shufersal Injector: Endpoints and content types to attempt:", attemptsToTry);
 
     for (let idx = 0; idx < cartItems.length; idx++) {
         const item = cartItems[idx];
@@ -122,23 +131,38 @@ async function transferCartToShufersal(cartItems) {
         let itemSuccess = false;
         let itemLog = `Product: ${item.name || code}\n`;
 
-        for (const attempt of attemptsToTry) {
-            const { url, contentType } = attempt;
-            const attemptKey = `${url} (${contentType})`;
+        // Build attempts list dynamically for this product
+        const attempts = [];
+        for (const url of targetUrls) {
+            const payloads = getJsonPayloads(code, item.quantity || 1);
+            for (const p of payloads) {
+                attempts.push({
+                    url,
+                    type: 'json',
+                    label: p.name,
+                    reqBody: JSON.stringify(p.body)
+                });
+            }
+        }
+        for (const url of formEndpoints) {
+            attempts.push({
+                url,
+                type: 'form',
+                label: 'form',
+                reqBody: null
+            });
+        }
+
+        for (const attempt of attempts) {
+            const { url, type, label, reqBody } = attempt;
+            const attemptKey = `${url} (${label})`;
             try {
-                let reqBody;
+                let bodyToSend;
                 let reqHeaders = { ...headers };
 
-                if (contentType === 'json') {
+                if (type === 'json') {
                     reqHeaders['Content-Type'] = 'application/json;charset=UTF-8';
-                    reqBody = JSON.stringify({
-                        productCodePost: code,
-                        productCode: code,
-                        qty: item.quantity || 1,
-                        quantity: item.quantity || 1,
-                        sellingMethod: 'BY_UNIT',
-                        CSRFToken: csrfToken
-                    });
+                    bodyToSend = reqBody;
                 } else {
                     reqHeaders['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
                     const formData = new URLSearchParams();
@@ -155,22 +179,22 @@ async function transferCartToShufersal(cartItems) {
                     if (csrfToken) {
                         formData.append('CSRFToken', csrfToken);
                     }
-                    reqBody = formData.toString();
+                    bodyToSend = formData.toString();
                 }
 
-                console.log(`Shufersal Injector: Sending add request to ${url} (${contentType}) for ${code}`);
+                console.log(`Shufersal Injector: Sending add request to ${url} (${label}) for ${code}`);
                 const resp = await fetch(url, {
                     method: 'POST',
                     headers: reqHeaders,
                     credentials: 'include',
-                    body: reqBody
+                    body: bodyToSend
                 });
 
                 const text = await resp.text();
-                console.log(`Shufersal Injector: Response from ${url} (${contentType}) for ${code}: status = ${resp.status}`, text.substring(0, 300));
+                console.log(`Shufersal Injector: Response from ${url} (${label}) for ${code}: status = ${resp.status}`, text.substring(0, 300));
 
                 urlStatuses[attemptKey] = resp.status;
-                itemLog += `- ${url} (${contentType}) -> Status ${resp.status}\n  Response: ${text.substring(0, 150).replace(/\r?\n|\r/g, " ")}\n`;
+                itemLog += `- ${url} (${label}) -> Status ${resp.status}\n  Response: ${text.substring(0, 150).replace(/\r?\n|\r/g, " ")}\n`;
 
                 if (resp.ok) {
                     // Check if response is HTML (redirect / login page)
@@ -206,8 +230,8 @@ async function transferCartToShufersal(cartItems) {
                 }
             } catch (e) {
                 urlStatuses[attemptKey] = 'NetworkError';
-                itemLog += `- ${url} (${contentType}) -> NetworkError: ${e.message}\n`;
-                console.error(`Shufersal Injector: Fetch error on ${url} (${contentType}) for ${code}:`, e);
+                itemLog += `- ${url} (${label}) -> NetworkError: ${e.message}\n`;
+                console.error(`Shufersal Injector: Fetch error on ${url} (${label}) for ${code}:`, e);
             }
         }
 
