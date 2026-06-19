@@ -26,25 +26,98 @@ window.addEventListener("message", async function(event) {
         }, "*");
     } else if (action === "EXECUTE_FETCH") {
         const { url, options } = event.data;
+
+        // Try jQuery $.ajax first if available (bypasses extension initiator cookie tracking)
+        if (window.$ && typeof window.$.ajax === 'function') {
+            window.$.ajax({
+                url: url,
+                type: options.method || 'POST',
+                data: options.body,
+                headers: options.headers,
+                dataType: 'text',
+                xhrFields: {
+                    withCredentials: true
+                },
+                success: function(data, textStatus, jqXHR) {
+                    window.postMessage({
+                        source: "shufersal-main",
+                        action: "EXECUTE_FETCH_RESPONSE",
+                        status: jqXHR.status,
+                        statusText: jqXHR.statusText,
+                        text: data,
+                        requestId
+                    }, "*");
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    window.postMessage({
+                        source: "shufersal-main",
+                        action: "EXECUTE_FETCH_RESPONSE",
+                        status: jqXHR.status,
+                        statusText: jqXHR.statusText,
+                        text: jqXHR.responseText || '',
+                        error: errorThrown || textStatus,
+                        requestId
+                    }, "*");
+                }
+            });
+            return;
+        }
+
+        // Try native XMLHttpRequest if $.ajax is not available
         try {
-            // Execute fetch in the page context
-            const resp = await fetch(url, options);
-            const text = await resp.text();
-            window.postMessage({
-                source: "shufersal-main",
-                action: "EXECUTE_FETCH_RESPONSE",
-                status: resp.status,
-                statusText: resp.statusText,
-                text: text,
-                requestId
-            }, "*");
-        } catch (e) {
-            window.postMessage({
-                source: "shufersal-main",
-                action: "EXECUTE_FETCH_RESPONSE",
-                error: e.message,
-                requestId
-            }, "*");
+            const xhr = new XMLHttpRequest();
+            xhr.open(options.method || 'POST', url, true);
+            xhr.withCredentials = true;
+            
+            // Set headers
+            if (options.headers) {
+                for (const [key, val] of Object.entries(options.headers)) {
+                    xhr.setRequestHeader(key, val);
+                }
+            }
+
+            xhr.onload = function() {
+                window.postMessage({
+                    source: "shufersal-main",
+                    action: "EXECUTE_FETCH_RESPONSE",
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                    text: xhr.responseText,
+                    requestId
+                }, "*");
+            };
+
+            xhr.onerror = function() {
+                window.postMessage({
+                    source: "shufersal-main",
+                    action: "EXECUTE_FETCH_RESPONSE",
+                    error: "XHR Network Error",
+                    requestId
+                }, "*");
+            };
+
+            xhr.send(options.body);
+        } catch (xhrError) {
+            // Fallback to native fetch
+            try {
+                const resp = await fetch(url, options);
+                const text = await resp.text();
+                window.postMessage({
+                    source: "shufersal-main",
+                    action: "EXECUTE_FETCH_RESPONSE",
+                    status: resp.status,
+                    statusText: resp.statusText,
+                    text: text,
+                    requestId
+                }, "*");
+            } catch (e) {
+                window.postMessage({
+                    source: "shufersal-main",
+                    action: "EXECUTE_FETCH_RESPONSE",
+                    error: e.message,
+                    requestId
+                }, "*");
+            }
         }
     }
 });
