@@ -17,17 +17,56 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     window.addEventListener('load', initShufersal);
 }
 
+function extractCsrfTokenFromPageContext() {
+    try {
+        const injectScript = document.createElement('script');
+        injectScript.textContent = `
+            (function() {
+                let token = '';
+                if (window.ACC && window.ACC.config) {
+                    token = window.ACC.config.CSRFToken || window.ACC.config.csrfToken || '';
+                }
+                if (!token) {
+                    token = window.csrfToken || window.CSRFToken || '';
+                }
+                document.documentElement.setAttribute('data-extracted-csrf', token);
+            })();
+        `;
+        document.documentElement.appendChild(injectScript);
+        const token = document.documentElement.getAttribute('data-extracted-csrf');
+        document.documentElement.removeAttribute('data-extracted-csrf');
+        injectScript.remove();
+        return token;
+    } catch (e) {
+        console.error("Shufersal Injector: Page context injection failed:", e);
+        return '';
+    }
+}
+
 async function transferCartToShufersal(cartItems) {
     createShufersalStatusWindow();
     updateShufersalStatus('מתחבר לשופרסל...');
 
     let csrfToken = '';
-    const metaTag = document.querySelector('meta[name="_csrf"]');
-    if (metaTag) csrfToken = metaTag.getAttribute('content');
+    let tokenSource = '';
+
+    csrfToken = extractCsrfTokenFromPageContext();
+    if (csrfToken) tokenSource = 'Page Context (ACC.config)';
+
+    if (!csrfToken) {
+        const metaTag = document.querySelector('meta[name="_csrf"]');
+        if (metaTag) {
+            csrfToken = metaTag.getAttribute('content');
+            tokenSource = 'Meta Tag (_csrf)';
+        }
+    }
 
     if (!csrfToken) {
         const inputTag = document.querySelector('input[name="CSRFToken"]');
-        if (inputTag) csrfToken = inputTag.value;
+        if (inputTag) {
+            csrfToken = inputTag.value;
+            tokenSource = 'Input Tag (CSRFToken)';
+        }
     }
 
     if (!csrfToken) {
@@ -39,6 +78,7 @@ async function transferCartToShufersal(cartItems) {
                 const v = c.substring(idx + 1).trim();
                 if (k.toLowerCase().includes('csrf') || k.toLowerCase().includes('xsrf')) {
                     csrfToken = decodeURIComponent(v);
+                    tokenSource = `Cookie (${k})`;
                     break;
                 }
             }
@@ -51,18 +91,19 @@ async function transferCartToShufersal(cartItems) {
             const match = script.textContent.match(/CSRFToken\s*[:=]\s*['"]([^'"]+)['"]/i);
             if (match) {
                 csrfToken = match[1];
+                tokenSource = 'Inline Script';
                 break;
             }
         }
     }
 
-    console.log("Shufersal Injector: Detected CSRF Token:", csrfToken);
+    console.log("Shufersal Injector: Detected CSRF Token:", csrfToken, "Source:", tokenSource);
     console.log("Shufersal Injector: Items to transfer:", cartItems);
 
     if (!csrfToken) {
         updateShufersalStatus('⚠️ אזהרה: לא נמצא טוקן CSRF. מנסה בכל זאת...');
     } else {
-        updateShufersalStatus(`🔑 טוקן CSRF נמצא: ${csrfToken.substring(0, 8)}... מכין ${cartItems.length} מוצרים...`);
+        updateShufersalStatus(`🔑 טוקן CSRF נמצא מ-${tokenSource}: ${csrfToken.substring(0, 8)}... מכין ${cartItems.length} מוצרים...`);
     }
 
     const headers = {
