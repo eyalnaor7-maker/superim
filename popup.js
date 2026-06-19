@@ -221,9 +221,9 @@ async function smartSearchVictory(productName) {
     return candidates[0];
 }
 
-async function smartSearchMCK(productName, pricesData) {
-    const candidates = findCandidatesFromDB(productName, pricesData, 'mck');
-    if (candidates.length === 0) return null;
+async function smartSearchMCK(productName) {
+    const candidates = await findCandidatesFromDB(productName, 'mck');
+    if (!candidates || candidates.length === 0) return null;
     const aiPick = await aiPickBestMatch(productName, candidates);
     if (aiPick) return aiPick;
     return candidates[0];
@@ -1792,120 +1792,121 @@ async function compareCarts() {
                 "Content-Type": "application/json"
             };
 
-            if (activeStore === 'shufersal' || activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
-            const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
-            const queryParams = new URLSearchParams({
-                select: 'barcode,name,store_products(store_name,store_code,price)',
-                barcode: `in.(${barcodesList.join(',')})`
-            });
-            try {
-                // Fetch products and substitutes in parallel
-                const fetchProducts = fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers }).then(r => r.ok ? r.json() : []);
-                
-                const subQueryParams = new URLSearchParams({
-                    original_barcode: `in.(${barcodesList.join(',')})`,
-                    order: 'priority.asc'
+            if (activeStore === 'shufersal' || activeStore === 'ramiLevy') {
+                const storeNameInDB = activeStore === 'shufersal' ? 'shufersal' : 'rami_levy';
+                const queryParams = new URLSearchParams({
+                    select: 'store_code,products(barcode,name,store_products(store_name,store_code,price))',
+                    store_name: `eq.${storeNameInDB}`,
+                    store_code: `in.(${codes.join(',')})`
                 });
-                const fetchSubs = fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers }).then(r => r.ok ? r.json() : []);
+                try {
+                    const res = await fetch(`${SUPABASE_URL}/rest/v1/store_products?${queryParams}`, { headers });
+                    if (!res.ok) throw new Error(`Supabase query failed: ${res.statusText}`);
+                    const storeProducts = await res.json();
 
-                const [products, subsList] = await Promise.all([fetchProducts, fetchSubs]);
-
-                const substitutesMap = {};
-                subsList.forEach(s => {
-                    if (!substitutesMap[s.original_barcode]) {
-                        substitutesMap[s.original_barcode] = [];
-                    }
-                    substitutesMap[s.original_barcode].push(s);
-                });
-
-                products.forEach(p => {
-                    const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
-                    const itemData = {
-                        name: p.name,
-                        shufersal_price: null,
-                        rami_levy_price: null,
-                        rami_levy_code: null,
-                        victory_code: null,
-                        victory_price: null,
-                        substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
-                    };
-                    if (p.store_products) {
-                        p.store_products.forEach(sp => {
-                            itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
-                            itemData[`${sp.store_name}_code`] = sp.store_code;
-                            if (sp.store_name === 'victory') {
-                                itemData.victory_retailer_id = sp.store_code;
+                    const barcodesList = storeProducts.map(sp => sp.products?.barcode).filter(Boolean);
+                    let substitutesMap = {};
+                    if (barcodesList.length > 0) {
+                        try {
+                            const subQueryParams = new URLSearchParams({
+                                original_barcode: `in.(${barcodesList.join(',')})`,
+                                order: 'priority.asc'
+                            });
+                            const subRes = await fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers });
+                            if (subRes.ok) {
+                                const subs = await subRes.json();
+                                subs.forEach(s => {
+                                    if (!substitutesMap[s.original_barcode]) {
+                                        substitutesMap[s.original_barcode] = [];
+                                    }
+                                    substitutesMap[s.original_barcode].push(s);
+                                });
                             }
-                        });
+                        } catch (err) {
+                            console.error("שגיאה בטעינת תחליפים מ-Supabase:", err);
+                        }
                     }
-                    pricesData[xmlKey] = itemData;
-                });
-            } catch (err) {
-                console.error("שגיאה בפנייה ל-Supabase:", err);
-            }
-        } else if (activeStore === 'ramiLevy') {
-            const queryParams = new URLSearchParams({
-                select: 'store_code,products(barcode,name,store_products(store_name,store_code,price))',
-                store_name: 'eq.rami_levy',
-                store_code: `in.(${codes.join(',')})`
-            });
-            try {
-                const res = await fetch(`${SUPABASE_URL}/rest/v1/store_products?${queryParams}`, { headers });
-                if (!res.ok) throw new Error(`Supabase query failed: ${res.statusText}`);
-                const storeProducts = await res.json();
 
-                const barcodesList = storeProducts.map(sp => sp.products?.barcode).filter(Boolean);
-                let substitutesMap = {};
-                if (barcodesList.length > 0) {
-                    try {
-                        const subQueryParams = new URLSearchParams({
-                            original_barcode: `in.(${barcodesList.join(',')})`,
-                            order: 'priority.asc'
-                        });
-                        const subRes = await fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers });
-                        if (subRes.ok) {
-                            const subs = await subRes.json();
-                            subs.forEach(s => {
-                                if (!substitutesMap[s.original_barcode]) {
-                                    substitutesMap[s.original_barcode] = [];
+                    storeProducts.forEach(sp => {
+                        const p = sp.products;
+                        if (!p) return;
+                        const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
+                        const itemData = {
+                            name: p.name,
+                            shufersal_price: null,
+                            rami_levy_price: null,
+                            rami_levy_code: null,
+                            victory_code: null,
+                            victory_price: null,
+                            substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
+                        };
+                        if (p.store_products) {
+                            p.store_products.forEach(innerSp => {
+                                itemData[`${innerSp.store_name}_price`] = innerSp.price != null ? parseFloat(innerSp.price) : null;
+                                itemData[`${innerSp.store_name}_code`] = innerSp.store_code;
+                                if (innerSp.store_name === 'victory') {
+                                    itemData.victory_retailer_id = innerSp.store_code;
                                 }
-                                substitutesMap[s.original_barcode].push(s);
                             });
                         }
-                    } catch (err) {
-                        console.error("שגיאה בטעינת תחליפים מ-Supabase:", err);
-                    }
+                        const key = (activeStore === 'shufersal' && sp.store_code) ? sp.store_code : xmlKey;
+                        pricesData[key] = itemData;
+                    });
+                } catch (err) {
+                    console.error("שגיאה בפנייה ל-Supabase:", err);
                 }
-
-                storeProducts.forEach(sp => {
-                    const p = sp.products;
-                    if (!p) return;
-                    const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
-                    const itemData = {
-                        name: p.name,
-                        shufersal_price: null,
-                        rami_levy_price: null,
-                        rami_levy_code: null,
-                        victory_code: null,
-                        victory_price: null,
-                        substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
-                    };
-                    if (p.store_products) {
-                        p.store_products.forEach(innerSp => {
-                            itemData[`${innerSp.store_name}_price`] = innerSp.price != null ? parseFloat(innerSp.price) : null;
-                            itemData[`${innerSp.store_name}_code`] = innerSp.store_code;
-                            if (innerSp.store_name === 'victory') {
-                                itemData.victory_retailer_id = innerSp.store_code;
-                            }
-                        });
-                    }
-                    pricesData[xmlKey] = itemData;
+            } else if (activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
+                const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
+                const queryParams = new URLSearchParams({
+                    select: 'barcode,name,store_products(store_name,store_code,price)',
+                    barcode: `in.(${barcodesList.join(',')})`
                 });
-            } catch (err) {
-                console.error("שגיאה בפנייה ל-Supabase:", err);
+                try {
+                    const fetchProducts = fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers }).then(r => r.ok ? r.json() : []);
+                    
+                    const subQueryParams = new URLSearchParams({
+                        original_barcode: `in.(${barcodesList.join(',')})`,
+                        order: 'priority.asc'
+                    });
+                    const fetchSubs = fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers }).then(r => r.ok ? r.json() : []);
+
+                    const [products, subsList] = await Promise.all([fetchProducts, fetchSubs]);
+
+                    const substitutesMap = {};
+                    subsList.forEach(s => {
+                        if (!substitutesMap[s.original_barcode]) {
+                            substitutesMap[s.original_barcode] = [];
+                        }
+                        substitutesMap[s.original_barcode].push(s);
+                    });
+
+                    products.forEach(p => {
+                        const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
+                        const itemData = {
+                            name: p.name,
+                            shufersal_price: null,
+                            rami_levy_price: null,
+                            rami_levy_code: null,
+                            victory_code: null,
+                            victory_price: null,
+                            substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
+                        };
+                        if (p.store_products) {
+                            p.store_products.forEach(sp => {
+                                itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
+                                itemData[`${sp.store_name}_code`] = sp.store_code;
+                                if (sp.store_name === 'victory') {
+                                    itemData.victory_retailer_id = sp.store_code;
+                                }
+                            });
+                        }
+                        pricesData[xmlKey] = itemData;
+                    });
+                } catch (err) {
+                    console.error("שגיאה בפנייה ל-Supabase:", err);
+                }
             }
         }
-    }
 
         // 3. Map products
         const matchedItems = [];
@@ -2204,8 +2205,8 @@ async function compareCarts() {
 
             // Machsanei HaShuk
             if (compareMCK && activeStore !== 'machsaneiHashuk' && (item.isMCKMissing || isMissing)) {
-                let sub = await smartSearchMCK(item.name, pricesData);
-                if (!sub) sub = findSubstitute(item.name, pricesData, 'mck');
+                let sub = await smartSearchMCK(item.name);
+                if (!sub) sub = await findSubstitute(item.name, 'mck');
                 if (sub) {
                     if (!sub.suggestedQty) {
                         const srcW = extractWeight(item.name);
