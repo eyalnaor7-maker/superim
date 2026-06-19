@@ -371,9 +371,16 @@ async function transferCartToShufersal(cartItems) {
     }
 
     if (successCount > 0) {
-        updateShufersalStatus(`🎉 סיום: ${successCount} מתוך ${cartItems.length} מוצרים הועברו בהצלחה.\n\nאנא בדוק את לוג הדיאגנוסטיקה למטה אם חלק מהמוצרים לא מופיעים, ולחץ על כפתור הרענון לעדכון הדף.`);
-        const actionArea = document.getElementById('shufersal-action-area');
-        if (actionArea) actionArea.style.display = 'block';
+        if (successCount === cartItems.length) {
+            updateShufersalStatus(`🎉 סיום: כל ${successCount} המוצרים הועברו בהצלחה!\nהעמוד יתרענן אוטומטית בעוד 2 שניות לעדכון העגלה... 🔄`);
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            updateShufersalStatus(`🎉 סיום: ${successCount} מתוך ${cartItems.length} מוצרים הועברו בהצלחה.\n\nחלק מהמוצרים לא הועברו. אנא בדוק את לוג הדיאגנוסטיקה למטה ולחץ על כפתור הרענון לעדכון הסל.`);
+            const actionArea = document.getElementById('shufersal-action-area');
+            if (actionArea) actionArea.style.display = 'block';
+        }
     } else {
         const statusReport = Object.entries(urlStatuses)
             .map(([url, status]) => `- ${url}: ${status}`)
