@@ -316,6 +316,8 @@
         .store-btn.dark:hover  { background: #374151; }
         .store-btn.blue  { background: #eff6ff; color: #1d4ed8; border: 1.5px solid #bfdbfe; }
         .store-btn.blue:hover  { background: #dbeafe; }
+        .store-btn.orange { background: #fff3e0; color: #e65100; border: 1.5px solid #ffcc80; }
+        .store-btn.orange:hover { background: #ffe0b2; }
         .store-btn.ghost { background: #f9fafb; color: #9ca3af; border: 1.5px solid #e5e7eb; cursor: default; }
 
         /* ===== DETAILS SECTION ===== */
@@ -385,6 +387,7 @@
         .p-shufersal { color: #6b7280; }
         .p-rami { color: #15803d; }
         .p-victory { color: #1d4ed8; }
+        .p-mck { color: #e65100; }
         .sub-btn {
             background: #1d4ed8;
             color: white;
@@ -444,16 +447,16 @@
     <div id="storePanel">
         <div class="store-panel-title">בחר סופרים להשוואה</div>
 
-        <!-- Shufersal - always compared -->
+        <!-- Shufersal -->
         <div class="store-toggle-row">
             <div>
                 <div class="store-toggle-label">
                     <span class="store-emoji">🏪</span> שופרסל
                 </div>
-                <div class="store-note">הסופר הנוכחי שלך (תמיד פעיל)</div>
+                <div class="store-note" id="noteShufersal">מחיר חי בזמן אמת</div>
             </div>
             <label class="toggle-switch">
-                <input type="checkbox" checked disabled>
+                <input type="checkbox" id="toggleShufersal" checked>
                 <span class="toggle-track"></span>
             </label>
         </div>
@@ -464,7 +467,7 @@
                 <div class="store-toggle-label">
                     <span class="store-emoji">🛒</span> רמי לוי
                 </div>
-                <div class="store-note">מחיר חי בזמן אמת</div>
+                <div class="store-note" id="noteRamiLevy">מחיר חי בזמן אמת</div>
             </div>
             <label class="toggle-switch">
                 <input type="checkbox" id="toggleRamiLevy" checked>
@@ -478,10 +481,24 @@
                 <div class="store-toggle-label">
                     <span class="store-emoji">🏬</span> ויקטורי
                 </div>
-                <div class="store-note">מחיר חי בזמן אמת</div>
+                <div class="store-note" id="noteVictory">מחיר חי בזמן אמת</div>
             </div>
             <label class="toggle-switch">
                 <input type="checkbox" id="toggleVictory" checked>
+                <span class="toggle-track"></span>
+            </label>
+        </div>
+
+        <!-- Machsanei HaShuk -->
+        <div class="store-toggle-row">
+            <div>
+                <div class="store-toggle-label">
+                    <span class="store-emoji">🏪</span> מחסני השוק
+                </div>
+                <div class="store-note" id="noteMCK">מחיר חי בזמן אמת</div>
+            </div>
+            <label class="toggle-switch">
+                <input type="checkbox" id="toggleMCK" checked>
                 <span class="toggle-track"></span>
             </label>
         </div>
