@@ -17,30 +17,63 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     window.addEventListener('load', initShufersal);
 }
 
-function extractCsrfTokenFromPageContext() {
-    try {
-        const injectScript = document.createElement('script');
-        injectScript.textContent = `
-            (function() {
-                let token = '';
-                if (window.ACC && window.ACC.config) {
-                    token = window.ACC.config.CSRFToken || window.ACC.config.csrfToken || '';
-                }
-                if (!token) {
-                    token = window.csrfToken || window.CSRFToken || '';
-                }
-                document.documentElement.setAttribute('data-extracted-csrf', token);
-            })();
-        `;
-        document.documentElement.appendChild(injectScript);
-        const token = document.documentElement.getAttribute('data-extracted-csrf');
-        document.documentElement.removeAttribute('data-extracted-csrf');
-        injectScript.remove();
-        return token;
-    } catch (e) {
-        console.error("Shufersal Injector: Page context injection failed:", e);
-        return '';
+let pendingRequests = {};
+
+window.addEventListener("message", function(event) {
+    if (event.source !== window || !event.data || event.data.source !== "shufersal-main") {
+        return;
     }
+
+    const { action, requestId } = event.data;
+    if (pendingRequests[requestId]) {
+        pendingRequests[requestId](event.data);
+        delete pendingRequests[requestId];
+    }
+});
+
+function getCsrfFromMainWorld() {
+    return new Promise((resolve) => {
+        const requestId = Math.random().toString(36).substring(2, 9);
+        pendingRequests[requestId] = (data) => {
+            resolve(data.csrfToken || '');
+        };
+        window.postMessage({
+            source: "shufersal-isolated",
+            action: "GET_CSRF",
+            requestId
+        }, "*");
+        setTimeout(() => {
+            if (pendingRequests[requestId]) {
+                delete pendingRequests[requestId];
+                resolve('');
+            }
+        }, 1500);
+    });
+}
+
+function fetchFromMainWorld(url, options) {
+    return new Promise((resolve, reject) => {
+        const requestId = Math.random().toString(36).substring(2, 9);
+        pendingRequests[requestId] = (data) => {
+            if (data.error) {
+                reject(new Error(data.error));
+            } else {
+                resolve({
+                    ok: data.status >= 200 && data.status < 300,
+                    status: data.status,
+                    statusText: data.statusText,
+                    text: () => Promise.resolve(data.text)
+                });
+            }
+        };
+        window.postMessage({
+            source: "shufersal-isolated",
+            action: "EXECUTE_FETCH",
+            url,
+            options,
+            requestId
+        }, "*");
+    });
 }
 
 async function transferCartToShufersal(cartItems) {
@@ -50,8 +83,8 @@ async function transferCartToShufersal(cartItems) {
     let csrfToken = '';
     let tokenSource = '';
 
-    csrfToken = extractCsrfTokenFromPageContext();
-    if (csrfToken) tokenSource = 'Page Context (ACC.config)';
+    csrfToken = await getCsrfFromMainWorld();
+    if (csrfToken) tokenSource = 'Page Context (ACC.config helper)';
 
     if (!csrfToken) {
         const metaTag = document.querySelector('meta[name="_csrf"]');
@@ -242,7 +275,7 @@ async function transferCartToShufersal(cartItems) {
                 }
 
                 console.log(`Shufersal Injector: Sending add request to ${url} (${label}) for ${code}`);
-                const resp = await fetch(url, {
+                const resp = await fetchFromMainWorld(url, {
                     method: 'POST',
                     headers: reqHeaders,
                     credentials: 'include',
