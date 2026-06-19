@@ -1754,7 +1754,7 @@ async function compareCarts() {
             "Content-Type": "application/json"
         };
 
-        if (activeStore === 'shufersal') {
+        if (activeStore === 'shufersal' || activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
             const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
             const queryParams = new URLSearchParams({
                 select: 'barcode,name,store_products(store_name,store_code,price)',
