@@ -1794,10 +1794,19 @@ async function compareCarts() {
 
             if (activeStore === 'shufersal' || activeStore === 'ramiLevy') {
                 const storeNameInDB = activeStore === 'shufersal' ? 'shufersal' : 'rami_levy';
+                const dbQueryCodes = [];
+                codes.forEach(c => {
+                    dbQueryCodes.push(c);
+                    if (!c.startsWith('P_')) {
+                        dbQueryCodes.push('P_' + c);
+                    } else {
+                        dbQueryCodes.push(c.substring(2));
+                    }
+                });
                 const queryParams = new URLSearchParams({
                     select: 'store_code,products(barcode,name,store_products(store_name,store_code,price))',
                     store_name: `eq.${storeNameInDB}`,
-                    store_code: `in.(${codes.join(',')})`
+                    store_code: `in.(${dbQueryCodes.join(',')})`
                 });
                 try {
                     const res = await fetch(`${SUPABASE_URL}/rest/v1/store_products?${queryParams}`, { headers });
@@ -1870,6 +1879,15 @@ async function compareCarts() {
                         }
                         const key = (activeStore === 'shufersal' && sp.store_code) ? sp.store_code : xmlKey;
                         pricesData[key] = itemData;
+                        if (activeStore === 'shufersal' && sp.store_code) {
+                            if (sp.store_code.startsWith('P_')) {
+                                pricesData[sp.store_code.substring(2)] = itemData;
+                            } else {
+                                pricesData['P_' + sp.store_code] = itemData;
+                            }
+                        } else {
+                            pricesData[xmlKey.replace('P_', '')] = itemData;
+                        }
                     });
                 } catch (err) {
                     console.error("שגיאה בפנייה ל-Supabase:", err);
@@ -1968,7 +1986,7 @@ async function compareCarts() {
             } else {
                 shufersalCode = item.code;
                 let xmlKey = shufersalCode.startsWith('P_') ? shufersalCode : `P_${shufersalCode}`;
-                dbItem = pricesData[xmlKey];
+                dbItem = pricesData[shufersalCode] || pricesData[xmlKey];
                 cleanBarcode = shufersalCode.replace('P_', '');
                 if (!dbItem) {
                     const matchingKey = Object.keys(pricesData).find(k => k.endsWith(cleanBarcode));
@@ -2041,12 +2059,7 @@ async function compareCarts() {
             }
         });
 
-        if (matchedItems.length === 0) {
-            resultDiv.innerHTML = '<p style="color:#9ca3af; text-align:center; padding: 20px;">אף אחד מהמוצרים לא קיים במאגר להשוואה</p>';
-            statusDiv.innerHTML = '';
-            compareBtn.disabled = false;
-            return;
-        }
+        // We do not return early even if matchedItems.length === 0, so that active store's scanned cart total is still rendered
 
         // 4. Fetch Rami Levy prices
         let ramiLevyResults = [];
@@ -2314,45 +2327,90 @@ async function compareCarts() {
             console.log("missingItems:", JSON.parse(JSON.stringify(missingItems)));
 
             let totalShufersal = 0, totalRamiLevy = 0, totalVictory = 0, totalMCK = 0;
-            let ramiCount = 0, victoryCount = 0, mckCount = 0;
+            let shufersalCount = 0, ramiCount = 0, victoryCount = 0, mckCount = 0;
 
-            inStockItems.forEach(item => {
-                totalShufersal += item.shufersal_total || 0;
-                if (item.rami_levy_total !== null && item.rami_levy_total !== undefined) {
-                    totalRamiLevy += item.rami_levy_total;
+            const processItemForTotals = (item) => {
+                // Shufersal
+                if (activeStore === 'shufersal') {
+                    totalShufersal += item.shufersal_total || 0;
+                    shufersalCount++;
+                } else if (compareShufersal) {
+                    if (item.shufersal_total !== null && item.shufersal_total !== undefined && item.shufersal_total > 0) {
+                        totalShufersal += item.shufersal_total;
+                        shufersalCount++;
+                    }
+                }
+
+                // Rami Levy
+                if (activeStore === 'ramiLevy') {
+                    totalRamiLevy += item.rami_levy_total || 0;
                     ramiCount++;
+                } else if (compareRamiLevy) {
+                    if (item.rami_levy_total !== null && item.rami_levy_total !== undefined && item.rami_levy_total > 0) {
+                        totalRamiLevy += item.rami_levy_total;
+                        ramiCount++;
+                    }
                 }
-                if (item.victory_total !== null && item.victory_total !== undefined) {
-                    totalVictory += item.victory_total;
+
+                // Victory
+                if (activeStore === 'victory') {
+                    totalVictory += item.victory_total || 0;
                     victoryCount++;
+                } else if (compareVictory) {
+                    if (item.victory_total !== null && item.victory_total !== undefined && item.victory_total > 0) {
+                        totalVictory += item.victory_total;
+                        victoryCount++;
+                    }
                 }
-                if (item.mck_total !== null && item.mck_total !== undefined) {
-                    totalMCK += item.mck_total;
+
+                // Machsanei HaShuk
+                if (activeStore === 'machsaneiHashuk') {
+                    totalMCK += item.mck_total || 0;
                     mckCount++;
+                } else if (compareMCK) {
+                    if (item.mck_total !== null && item.mck_total !== undefined && item.mck_total > 0) {
+                        totalMCK += item.mck_total;
+                        mckCount++;
+                    }
                 }
-            });
+            };
+
+            inStockItems.forEach(processItemForTotals);
+            outOfStockItems.forEach(processItemForTotals);
+            missingItems.forEach(processItemForTotals);
 
             const storesWithData = [];
             if (activeStore === 'shufersal' || compareShufersal) {
+                const isShufersalActive = activeStore === 'shufersal';
+                const shufersalInfo = isShufersalActive 
+                    ? 'הסופר הנוכחי שלך' 
+                    : (shufersalCount === rawCartItems.length ? 'ממאגר מחירים' : `ממאגר מחירים (${shufersalCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
                     key: 'shufersal', name: 'שופרסל', total: totalShufersal,
-                    info: activeStore === 'shufersal' ? 'הסופר הנוכחי שלך' : 'ממאגר מחירים', hasData: true
+                    info: shufersalInfo, hasData: isShufersalActive ? true : (shufersalCount > 0)
                 });
             }
 
             if (compareRamiLevy) {
+                const isRamiActive = activeStore === 'ramiLevy';
+                const ramiInfo = isRamiActive 
+                    ? 'הסופר הנוכחי שלך' 
+                    : (ramiCount === rawCartItems.length ? 'מחיר חי' : `מחיר חי (${ramiCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
                     key: 'ramiLevy', name: 'רמי לוי', total: totalRamiLevy,
-                    info: activeStore === 'ramiLevy' ? 'הסופר הנוכחי שלך' : (ramiCount > 0 ? 'מחיר חי' : 'ממתין'),
-                    hasData: activeStore === 'ramiLevy' ? true : (ramiCount > 0)
+                    info: ramiInfo,
+                    hasData: isRamiActive ? true : (ramiCount > 0)
                 });
             }
 
             if (compareVictory) {
                 const isVictoryActive = activeStore === 'victory';
+                const victoryInfo = isVictoryActive 
+                    ? 'הסופר הנוכחי שלך' 
+                    : (victoryCount === rawCartItems.length ? 'מחיר חי' : `מחיר חי (${victoryCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
                     key: 'victory', name: 'ויקטורי', total: totalVictory,
-                    info: isVictoryActive ? 'הסופר הנוכחי שלך' : (victoryResults.length > 0 ? 'מחיר חי' : 'ממאגר'),
+                    info: victoryInfo,
                     hasData: isVictoryActive ? true : (victoryCount > 0),
                     debugInfo: isVictoryActive ? null : (victoryResults.length === 0 ? (agentDebug?.noToken ? 'לא מחובר לויקטורי' : (agentDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף')) : null)
                 });
@@ -2360,9 +2418,12 @@ async function compareCarts() {
 
             if (compareMCK) {
                 const isMCKActive = activeStore === 'machsaneiHashuk';
+                const mckInfo = isMCKActive 
+                    ? 'הסופר הנוכחי שלך' 
+                    : (mckCount === rawCartItems.length ? 'מחיר חי' : `מחיר חי (${mckCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
                     key: 'mck', name: 'מחסני השוק', total: totalMCK,
-                    info: isMCKActive ? 'הסופר הנוכחי שלך' : (mckResults.length > 0 ? 'מחיר חי' : 'ממאגר'),
+                    info: mckInfo,
                     hasData: isMCKActive ? true : (mckCount > 0),
                     debugInfo: isMCKActive ? null : (mckResults.length === 0 ? (mckDebug?.noToken ? 'לא מחובר למחסני השוק' : (mckDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף')) : null)
                 });
