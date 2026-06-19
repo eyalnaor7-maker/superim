@@ -18,45 +18,36 @@ function extractWeight(name) {
     return { value, unit };
 }
 
-function findCandidatesFromDB(productName, pricesData, targetStore) {
-    const words = productName.split(/[\s\-\/,.'"%*]+/).map(w => w.trim()).filter(w => w.length > 1);
-    const coreTokens = words.filter(w => !STOP_WORDS.has(w) && !BRAND_WORDS.has(w) && !/^\d+$/.test(w));
+async function findCandidatesFromDB(productName, targetStore) {
+    if (!SUPABASE_ANON_KEY) return [];
 
-    const codeField = targetStore === 'victory' ? 'victory_code' : 'rami_levy_code';
-    const priceField = targetStore === 'victory' ? 'victory_price' : 'rami_levy_price';
+    const headers = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json"
+    };
 
-    let candidates = [];
-    const requiredScore = Math.max(1, Math.min(2, coreTokens.length));
-    const isOriginalCouscous = productName.includes('קוסקוס');
-
-    for (const [, item] of Object.entries(pricesData)) {
-        if (!item[codeField]) continue;
-        if (item.name === productName) continue;
-        
-        // Strict filter to avoid bringing couscous if the user didn't ask for it
-        if (!isOriginalCouscous && item.name.includes('קוסקוס')) continue;
-
-        let score = 0;
-        for (const token of coreTokens) {
-            if (item.name.includes(token)) score++;
-        }
-        if (score >= requiredScore) {
-            candidates.push({
-                code: String(item[codeField]),
-                name: item.name,
-                price: item[priceField] || 0,
-                score
-            });
-        }
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/find_candidates`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                product_name: productName,
+                target_store: targetStore,
+                limit_val: 8
+            })
+        });
+        if (!res.ok) throw new Error(`Candidates fetch failed: ${res.statusText}`);
+        return await res.json();
+    } catch (e) {
+        console.error("שגיאה בחיפוש תחליפים ב-Supabase:", e);
+        return [];
     }
-
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates.slice(0, 8);
 }
 
-function findSubstitute(productName, pricesData, targetStore = 'rami_levy') {
-    const candidates = findCandidatesFromDB(productName, pricesData, targetStore);
-    if (candidates.length > 0) {
+async function findSubstitute(productName, targetStore = 'rami_levy') {
+    const candidates = await findCandidatesFromDB(productName, targetStore);
+    if (candidates && candidates.length > 0) {
         const best = candidates[0];
         const sourceWeight = extractWeight(productName);
         let suggestedQty = 1;
@@ -100,12 +91,18 @@ function extractSearchQuery(name) {
 // ===== AI SUBSTITUTE ENGINE (Gemini) =====
 let GEMINI_API_KEY = ''; 
 const GEMINI_MODEL = 'gemini-2.0-flash-lite';
+let SUPABASE_URL = 'https://icdethibkzwzguwmfoef.supabase.co';
+let SUPABASE_ANON_KEY = '';
 let substitutionLog = [];
 
 try {
     fetch(chrome.runtime.getURL('config.json'))
         .then(r => r.json())
-        .then(cfg => { GEMINI_API_KEY = cfg.gemini_api_key || ''; })
+        .then(cfg => {
+            GEMINI_API_KEY = cfg.gemini_api_key || '';
+            if (cfg.supabase_url) SUPABASE_URL = cfg.supabase_url;
+            SUPABASE_ANON_KEY = cfg.supabase_anon_key || '';
+        })
         .catch(() => {});
 } catch(e) {}
 
@@ -187,9 +184,9 @@ async function smartSearchRamiLevy(productName, excludeCode = null) {
     return null;
 }
 
-async function smartSearchVictory(productName, pricesData) {
-    const candidates = findCandidatesFromDB(productName, pricesData, 'victory');
-    if (candidates.length === 0) return null;
+async function smartSearchVictory(productName) {
+    const candidates = await findCandidatesFromDB(productName, 'victory');
+    if (!candidates || candidates.length === 0) return null;
     const aiPick = await aiPickBestMatch(productName, candidates);
     if (aiPick) return aiPick;
     return candidates[0];
@@ -791,12 +788,102 @@ async function compareCarts() {
             return;
         }
 
-        // 2. Load databases
-        statusDiv.innerHTML = 'טוען מאגר נתונים...';
-        const [pricesData, substitutesData] = await Promise.all([
-            fetch(chrome.runtime.getURL('prices.json')).then(r => r.json()),
-            fetch(chrome.runtime.getURL('substitutes.json')).then(r => r.json()).catch(() => ({}))
-        ]);
+        // 2. Query Supabase directly
+        statusDiv.innerHTML = 'טוען נתונים מ-Supabase...';
+        const pricesData = {};
+
+        const codes = rawCartItems.map(item => item.code);
+        const headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json"
+        };
+
+        if (activeStore === 'shufersal') {
+            const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
+            const queryParams = new URLSearchParams({
+                select: 'barcode,name,store_products(store_name,store_code,price),substitutes(substitute_code,substitute_name,store_name)',
+                barcode: `in.(${barcodesList.join(',')})`
+            });
+            try {
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers });
+                if (!res.ok) throw new Error(`Supabase query failed: ${res.statusText}`);
+                const products = await res.json();
+                products.forEach(p => {
+                    const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
+                    const itemData = {
+                        name: p.name,
+                        shufersal_price: null,
+                        rami_levy_price: null,
+                        rami_levy_code: null,
+                        victory_code: null,
+                        victory_price: null
+                    };
+                    if (p.store_products) {
+                        p.store_products.forEach(sp => {
+                            itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
+                            itemData[`${sp.store_name}_code`] = sp.store_code;
+                            if (sp.store_name === 'victory') {
+                                itemData.victory_retailer_id = sp.store_code;
+                            }
+                        });
+                    }
+                    if (p.substitutes) {
+                        const sub = p.substitutes.find(s => s.store_name === 'rami_levy');
+                        if (sub) {
+                            itemData.substitute_code = sub.substitute_code;
+                            itemData.substitute_name = sub.substitute_name;
+                        }
+                    }
+                    pricesData[xmlKey] = itemData;
+                });
+            } catch (err) {
+                console.error("שגיאה בפנייה ל-Supabase:", err);
+            }
+        } else if (activeStore === 'ramiLevy') {
+            const queryParams = new URLSearchParams({
+                select: 'store_code,products(barcode,name,store_products(store_name,store_code,price),substitutes(substitute_code,substitute_name,store_name))',
+                store_name: 'eq.rami_levy',
+                store_code: `in.(${codes.join(',')})`
+            });
+            try {
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/store_products?${queryParams}`, { headers });
+                if (!res.ok) throw new Error(`Supabase query failed: ${res.statusText}`);
+                const storeProducts = await res.json();
+                storeProducts.forEach(sp => {
+                    const p = sp.products;
+                    if (!p) return;
+                    const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
+                    const itemData = {
+                        name: p.name,
+                        shufersal_price: null,
+                        rami_levy_price: null,
+                        rami_levy_code: null,
+                        victory_code: null,
+                        victory_price: null
+                    };
+                    if (p.store_products) {
+                        p.store_products.forEach(innerSp => {
+                            itemData[`${innerSp.store_name}_price`] = innerSp.price != null ? parseFloat(innerSp.price) : null;
+                            itemData[`${innerSp.store_name}_code`] = innerSp.store_code;
+                            if (innerSp.store_name === 'victory') {
+                                itemData.victory_retailer_id = innerSp.store_code;
+                            }
+                        });
+                    }
+                    if (p.substitutes) {
+                        const sub = p.substitutes.find(s => s.store_name === 'rami_levy');
+                        if (sub) {
+                            itemData.substitute_code = sub.substitute_code;
+                            itemData.substitute_name = sub.substitute_name;
+                        }
+                    }
+                    pricesData[xmlKey] = itemData;
+                });
+            } catch (err) {
+                console.error("שגיאה בפנייה ל-Supabase:", err);
+            }
+        }
 
         // 3. Map products
         const matchedItems = [];
@@ -945,7 +1032,7 @@ async function compareCarts() {
             // Rami Levy
             if (compareRamiLevy && (item.isRamiMissing || isMissing)) {
                 let sub = await smartSearchRamiLevy(item.name, item.targetCode);
-                if (!sub) sub = findSubstitute(item.name, pricesData, 'rami_levy');
+                if (!sub) sub = await findSubstitute(item.name, 'rami_levy');
                 if (sub) {
                     if (!sub.suggestedQty) {
                         const srcW = extractWeight(item.name);
@@ -964,8 +1051,8 @@ async function compareCarts() {
             
             // Victory
             if (compareVictory && (item.isVictoryMissing || isMissing)) {
-                let sub = await smartSearchVictory(item.name, pricesData);
-                if (!sub) sub = findSubstitute(item.name, pricesData, 'victory');
+                let sub = await smartSearchVictory(item.name);
+                if (!sub) sub = await findSubstitute(item.name, 'victory');
                 if (sub) {
                     if (!sub.suggestedQty) {
                         const srcW = extractWeight(item.name);

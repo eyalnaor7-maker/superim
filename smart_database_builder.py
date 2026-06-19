@@ -22,9 +22,12 @@ import random
 import os
 import re
 import glob
-import sys
-import io
 from datetime import datetime
+import pg8000.dbapi
+import getpass
+
+PASSWORD = None
+
 
 # תיקון encoding לטרמינל Windows
 if sys.platform == 'win32':
@@ -379,22 +382,52 @@ def run():
     print(f"    שופרסל + ויקטורי: {len(common_sh_vi):,}")
     print(f"    סה\"כ ברקודים ייחודיים: {len(all_barcodes):,}")
 
-    # ---- שלב 2: טעינת מסד קיים + גיבוי ----
-    print(f"\n📚 שלב 2: טעינת מסד קיים...")
+    # ---- שלב 2: טעינת מסד קיים מ-Supabase ----
+    print(f"\n📚 שלב 2: טעינת מסד קיים מ-Supabase...")
     database = {}
-    if os.path.exists(PRICES_JSON_FILE):
-        with open(PRICES_JSON_FILE, 'r', encoding='utf-8') as f:
-            database = json.load(f)
-        print(f"  מאגר קיים: {len(database):,} מוצרים")
+    
+    global PASSWORD
+    if not PASSWORD:
+        PASSWORD = getpass.getpass("Enter your Supabase database password: ")
 
-        # גיבוי
-        if not DRY_RUN:
-            backup_path = PRICES_JSON_FILE.replace('.json', BACKUP_SUFFIX)
-            with open(backup_path, 'w', encoding='utf-8') as f:
-                json.dump(database, f, ensure_ascii=False, indent=4)
-            print(f"  💾 גיבוי נשמר: {backup_path}")
-    else:
-        print("  ⚠️ לא נמצא prices.json — ייווצר חדש")
+    try:
+        conn = pg8000.dbapi.connect(
+            host="db.icdethibkzwzguwmfoef.supabase.co",
+            port=5432,
+            database="postgres",
+            user="postgres",
+            password=PASSWORD
+        )
+        cursor = conn.cursor()
+    except Exception as e:
+        print(f"  ❌ שגיאה בחיבור ל-Supabase: {e}")
+        return
+
+    try:
+        # Load products
+        cursor.execute("SELECT barcode, name FROM products")
+        for barcode, name in cursor.fetchall():
+            database[barcode] = {
+                "name": name,
+                "shufersal_price": None,
+                "rami_levy_price": None,
+                "rami_levy_code": None,
+                "victory_code": None,
+                "victory_price": None
+            }
+
+        # Load store products
+        cursor.execute("SELECT barcode, store_name, store_code, price FROM store_products")
+        for barcode, store_name, store_code, price in cursor.fetchall():
+            if barcode in database:
+                database[barcode][f"{store_name}_price"] = float(price) if price is not None else None
+                database[barcode][f"{store_name}_code"] = store_code
+        print(f"  מאגר קיים: {len(database):,} מוצרים נטענו מ-Supabase")
+    except Exception as e:
+        print(f"  ❌ שגיאה בטעינת נתונים מ-Supabase: {e}")
+        cursor.close()
+        conn.close()
+        return
 
     # ---- שלב 3: ניתוח מה חסר ----
     print(f"\n🔍 שלב 3: ניתוח מה חסר...")
@@ -566,19 +599,42 @@ def run():
                 time.sleep(FAIL_COOLDOWN)
                 consecutive_fails = 0
 
-            # שמירה אוטומטית
-            if changed:
-                save_count += 1
-            if save_count > 0 and save_count % SAVE_EVERY == 0 and not DRY_RUN:
-                _save(database)
-                print(f"  💾 שמירה אוטומטית ({save_count} עדכונים)")
+            # שמירה ב-Supabase
+            if changed and not DRY_RUN:
+                try:
+                    cursor.execute(
+                        "INSERT INTO products (barcode, name) VALUES (%s, %s) "
+                        "ON CONFLICT (barcode) DO UPDATE SET name = EXCLUDED.name",
+                        (db_key, entry['name'])
+                    )
+                    for store in ['shufersal', 'rami_levy', 'victory']:
+                        code = entry.get(f"{store}_code")
+                        price = entry.get(f"{store}_price")
+                        if code is not None or price is not None:
+                            cursor.execute(
+                                "INSERT INTO store_products (barcode, store_name, store_code, price) "
+                                "VALUES (%s, %s, %s, %s) "
+                                "ON CONFLICT (barcode, store_name) DO UPDATE SET "
+                                "store_code = EXCLUDED.store_code, price = EXCLUDED.price, updated_at = now()",
+                                (db_key, store, str(code) if code is not None else None, float(price) if price is not None else None)
+                            )
+                    conn.commit()
+                    save_count += 1
+                    print(f"  💾 נשמר ל-Supabase")
+                except Exception as e:
+                    print(f"\n  ❌ שגיאה בשמירה ל-Supabase: {e}")
+                    conn.rollback()
 
     except KeyboardInterrupt:
         print("\n\n🛑 עצירה ידנית! שומר את מה שהספקנו...")
 
     # ---- שלב 5: שמירה וסיכום ----
     if not DRY_RUN:
-        _save(database)
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
 
     print("\n" + "=" * 65)
     print("📊 סיכום ריצה:")
@@ -614,13 +670,12 @@ def run():
     if DRY_RUN:
         print(f"\n  ℹ️ זו הייתה הרצת DRY RUN — שום דבר לא נשמר!")
     else:
-        print(f"\n  ✅ השינויים נשמרו ל-{PRICES_JSON_FILE}")
+        print(f"\n  ✅ השינויים נשמרו ל-Supabase")
 
 
 def _save(database):
-    """שמירה בטוחה של המאגר"""
-    with open(PRICES_JSON_FILE, 'w', encoding='utf-8') as f:
-        json.dump(database, f, ensure_ascii=False, indent=4)
+    """(מיושן) שמירה בטוחה של המאגר"""
+    pass
 
 
 # ==========================================
