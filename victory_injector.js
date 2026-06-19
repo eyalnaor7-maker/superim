@@ -4,14 +4,20 @@
 const VICTORY_RETAILER_ID = 1470;
 const VICTORY_APP_ID = 4;
 
-window.addEventListener('load', function () {
+function initVictory() {
     chrome.storage.local.get(['savedCartVictory'], function (result) {
         if (result.savedCartVictory && result.savedCartVictory.length > 0) {
             chrome.storage.local.remove(['savedCartVictory']);
             transferCartToVictory(result.savedCartVictory);
         }
     });
-});
+}
+
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    initVictory();
+} else {
+    window.addEventListener('load', initVictory);
+}
 
 async function transferCartToVictory(cartItems) {
     createVictoryStatusWindow();

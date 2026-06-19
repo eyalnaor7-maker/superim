@@ -15,6 +15,7 @@
   "host_permissions": [
     "*://*.rami-levy.co.il/*",
     "*://*.victoryonline.co.il/*",
+    "*://*.victory.co.il/*",
     "*://*.mck.co.il/*",
     "*://firestore.googleapis.com/*",
     "*://generativelanguage.googleapis.com/*",
@@ -32,7 +33,7 @@
       "js": ["rami_levy_injector.js"]
     },
     {
-      "matches": ["*://*.victoryonline.co.il/*"],
+      "matches": ["*://*.victoryonline.co.il/*", "*://*.victory.co.il/*"],
       "js": ["victory_injector.js"]
     },
     {
