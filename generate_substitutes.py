@@ -72,8 +72,8 @@ def ask_gemini_for_substitutes(original_name, candidates):
     if not candidates:
         return None, None
 
-    # We use gemini-2.0-flash as the default model
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    # We use gemini-2.5-flash as the default model
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     candidate_list = "\n".join([f"{i+1}. {c['name']}" for i, c in enumerate(candidates)])
     
@@ -100,31 +100,37 @@ def ask_gemini_for_substitutes(original_name, candidates):
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 10}
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 200}
     }
     
-    try:
-        res = requests.post(url, json=payload, timeout=10)
-        if res.status_code == 200:
-            text = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-            digits = re.findall(r'\d+', text)
-            if len(digits) >= 2:
-                idx1, idx2 = int(digits[0]), int(digits[1])
-                sub1 = candidates[idx1 - 1] if 1 <= idx1 <= len(candidates) else None
-                sub2 = candidates[idx2 - 1] if 1 <= idx2 <= len(candidates) else None
-                return sub1, sub2
-            elif len(digits) == 1:
-                idx1 = int(digits[0])
-                sub1 = candidates[idx1 - 1] if 1 <= idx1 <= len(candidates) else None
-                return sub1, None
-        elif res.status_code == 403:
-            print(" (AI error: API key is invalid or leaked. Please update the gemini_api_key in config.json)", end="")
-        elif res.status_code == 429:
-            print(" (AI error: API rate limit/quota exceeded)", end="")
-        else:
-            print(f" (AI error: HTTP {res.status_code})", end="")
-    except Exception as e:
-        print(f" (AI error: {e})", end="")
+    for attempt in range(4):
+        try:
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code == 200:
+                text = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                digits = re.findall(r'\d+', text)
+                if len(digits) >= 2:
+                    idx1, idx2 = int(digits[0]), int(digits[1])
+                    sub1 = candidates[idx1 - 1] if 1 <= idx1 <= len(candidates) else None
+                    sub2 = candidates[idx2 - 1] if 1 <= idx2 <= len(candidates) else None
+                    return sub1, sub2
+                elif len(digits) == 1:
+                    idx1 = int(digits[0])
+                    sub1 = candidates[idx1 - 1] if 1 <= idx1 <= len(candidates) else None
+                    return sub1, None
+            elif res.status_code == 429:
+                wait = 15 * (attempt + 1)
+                print(f" (Rate limit, waiting {wait}s...)", end="", flush=True)
+                time.sleep(wait)
+            elif res.status_code == 403:
+                print(" (AI error: API key is invalid or leaked. Please update the gemini_api_key in config.json)", end="")
+                break
+            else:
+                print(f" (AI error: HTTP {res.status_code})", end="")
+                break
+        except Exception as e:
+            print(f" (AI error: {e})", end="")
+            time.sleep(2)
     return None, None
 
 STOP_WORDS_HEB = {
@@ -319,7 +325,7 @@ def main():
                 print("  ❌ No suitable substitutes found (left empty).")
 
         if USE_GEMINI:
-            time.sleep(1.0) # Rate limit Gemini calls nicely
+            time.sleep(4.5) # Rate limit Gemini calls nicely to stay under 15 RPM
 
     # 3. Save to database
     if substitutes_to_insert:
