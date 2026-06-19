@@ -33,10 +33,14 @@ async function transferCartToShufersal(cartItems) {
     if (!csrfToken) {
         const cookies = document.cookie.split(';');
         for (const c of cookies) {
-            const [k, v] = c.trim().split('=');
-            if (k.toLowerCase().includes('csrf')) {
-                csrfToken = decodeURIComponent(v);
-                break;
+            const idx = c.indexOf('=');
+            if (idx !== -1) {
+                const k = c.substring(0, idx).trim();
+                const v = c.substring(idx + 1).trim();
+                if (k.toLowerCase().includes('csrf') || k.toLowerCase().includes('xsrf')) {
+                    csrfToken = decodeURIComponent(v);
+                    break;
+                }
             }
         }
     }
@@ -70,53 +74,12 @@ async function transferCartToShufersal(cartItems) {
         headers['CSRFToken'] = csrfToken;
         headers['X-CSRF-Token'] = csrfToken;
         headers['X-Csrf-Token'] = csrfToken;
+        headers['csrftoken'] = csrfToken;
+        headers['X-XSRF-TOKEN'] = csrfToken;
     }
 
     let successCount = 0;
     let urlStatuses = {};
-
-    // Defined JSON payload structures
-    const getJsonPayloads = (code, qty) => [
-        { name: 'json-flat', body: { productCode: code, quantity: qty } },
-        { name: 'json-nested', body: { product: { code: code }, quantity: qty } },
-        { name: 'json-bulk-array', body: [{ productCode: code, quantity: qty }] },
-        { name: 'json-bulk-entries', body: { entries: [{ productCode: code, quantity: qty }] } },
-        { name: 'json-simple', body: { code: code, quantity: qty } },
-        { name: 'json-flat-qty', body: { productCode: code, qty: qty } }
-    ];
-
-    const targetUrls = [
-        '/online/he/cart/add',
-        '/online/he/cart/add/'
-    ];
-
-    const formEndpoints = [
-        '/online/he/cart/add',
-        '/online/he/cart/add/',
-        '/online/he/cart/addEntry',
-        '/online/he/cart/addEntry/',
-        '/online/he/cart/addentry',
-        '/online/he/cart/addentry/'
-    ];
-
-    const formTag = document.querySelector('form[action*="/cart/"]');
-    if (formTag) {
-        const actionUrl = formTag.getAttribute('action');
-        if (actionUrl) {
-            if (!targetUrls.includes(actionUrl)) {
-                targetUrls.unshift(actionUrl);
-                if (!actionUrl.endsWith('/')) {
-                    targetUrls.unshift(actionUrl + '/');
-                }
-            }
-            if (!formEndpoints.includes(actionUrl)) {
-                formEndpoints.unshift(actionUrl);
-                if (!actionUrl.endsWith('/')) {
-                    formEndpoints.unshift(actionUrl + '/');
-                }
-            }
-        }
-    }
 
     for (let idx = 0; idx < cartItems.length; idx++) {
         const item = cartItems[idx];
@@ -131,26 +94,81 @@ async function transferCartToShufersal(cartItems) {
         let itemSuccess = false;
         let itemLog = `Product: ${item.name || code}\n`;
 
-        // Build attempts list dynamically for this product
-        const attempts = [];
-        for (const url of targetUrls) {
-            const payloads = getJsonPayloads(code, item.quantity || 1);
-            for (const p of payloads) {
+        // Define the specific attempts based on exact F12 network logs
+        const attempts = [
+            // Attempt 1: Exact F12 JSON structure with cartContext params
+            {
+                url: '/online/he/cart/add?cartContext%5BopenFrom%5D=DEPARTMENT&cartContext%5BrecommendationType%5D=REGULAR',
+                type: 'json',
+                label: 'json-exact-f12',
+                reqBody: JSON.stringify({
+                    productCodePost: code,
+                    productCode: code,
+                    qty: String(item.quantity || 1),
+                    frontQuantity: String(item.quantity || 1),
+                    comment: "",
+                    affiliateCode: "",
+                    sellingMethod: "BY_UNIT"
+                })
+            },
+            // Attempt 2: Exact F12 JSON structure without query params
+            {
+                url: '/online/he/cart/add',
+                type: 'json',
+                label: 'json-exact-f12-no-params',
+                reqBody: JSON.stringify({
+                    productCodePost: code,
+                    productCode: code,
+                    qty: String(item.quantity || 1),
+                    frontQuantity: String(item.quantity || 1),
+                    comment: "",
+                    affiliateCode: "",
+                    sellingMethod: "BY_UNIT"
+                })
+            },
+            // Attempt 3: Trailing slash exact JSON
+            {
+                url: '/online/he/cart/add/',
+                type: 'json',
+                label: 'json-exact-f12-slash',
+                reqBody: JSON.stringify({
+                    productCodePost: code,
+                    productCode: code,
+                    qty: String(item.quantity || 1),
+                    frontQuantity: String(item.quantity || 1),
+                    comment: "",
+                    affiliateCode: "",
+                    sellingMethod: "BY_UNIT"
+                })
+            },
+            // Fallback 4: Standard Form Post to /online/he/cart/add
+            {
+                url: '/online/he/cart/add?cartContext%5BopenFrom%5D=DEPARTMENT&cartContext%5BrecommendationType%5D=REGULAR',
+                type: 'form',
+                label: 'form-exact-f12',
+                reqBody: null
+            },
+            // Fallback 5: Form Post to addEntry
+            {
+                url: '/online/he/cart/addEntry',
+                type: 'form',
+                label: 'form-addEntry',
+                reqBody: null
+            }
+        ];
+
+        // Add formTag action dynamically if present
+        const formTag = document.querySelector('form[action*="/cart/"]');
+        if (formTag) {
+            const actionUrl = formTag.getAttribute('action');
+            if (actionUrl) {
                 attempts.push({
-                    url,
-                    type: 'json',
-                    label: p.name,
-                    reqBody: JSON.stringify(p.body)
+                    url: actionUrl,
+                    type: 'form',
+                    label: 'form-tag-action',
+                    reqBody: null
                 });
             }
-        }
-        for (const url of formEndpoints) {
-            attempts.push({
-                url,
-                type: 'form',
-                label: 'form',
-                reqBody: null
-            });
         }
 
         for (const attempt of attempts) {
@@ -173,9 +191,9 @@ async function transferCartToShufersal(cartItems) {
                     formData.append('sellingMethod', 'BY_UNIT');
                     formData.append('affiliateCode', '');
                     formData.append('comment', '');
-                    formData.append('frontQuantity', item.quantity || 1);
-                    formData.append('qty', item.quantity || 1);
-                    formData.append('quantity', item.quantity || 1);
+                    formData.append('frontQuantity', String(item.quantity || 1));
+                    formData.append('qty', String(item.quantity || 1));
+                    formData.append('quantity', String(item.quantity || 1));
                     if (csrfToken) {
                         formData.append('CSRFToken', csrfToken);
                     }
@@ -197,20 +215,27 @@ async function transferCartToShufersal(cartItems) {
                 itemLog += `- ${url} (${label}) -> Status ${resp.status}\n  Response: ${text.substring(0, 150).replace(/\r?\n|\r/g, " ")}\n`;
 
                 if (resp.ok) {
-                    // Check if response is HTML (redirect / login page)
-                    if (text.trim().startsWith('<') || text.includes('<!DOCTYPE html>') || text.includes('<html')) {
-                        console.warn(`Shufersal Injector: Received HTML instead of JSON for ${code}.`);
-                        urlStatuses[attemptKey] = 'HTML_REDIRECT';
+                    // Check if response is a full page redirect (contains standard document tags or title)
+                    if (text.includes('<!DOCTYPE html>') || text.includes('<html') || text.includes('<title>Shufersal</title>')) {
+                        console.warn(`Shufersal Injector: Received HTML page instead of fragment for ${code}.`);
+                        urlStatuses[attemptKey] = 'HTML_REDIRECT_ERROR';
                         continue;
                     }
 
+                    // A successful update will return the minicart HTML fragment containing the product code
+                    if (text.includes(code)) {
+                        itemSuccess = true;
+                        urlStatuses[attemptKey] = 'SUCCESS_FRAGMENT';
+                        break;
+                    }
+
+                    // Try to parse as JSON in case it was a JSON response format
                     let parsed = null;
                     try {
                         parsed = JSON.parse(text);
                     } catch (e) {}
 
                     if (parsed) {
-                        // If it is JSON, check Hybris success indicators
                         if (parsed.statusCode && parsed.statusCode !== 'success') {
                             console.warn(`Shufersal Injector: Server returned JSON status: ${parsed.statusCode} for ${code}`);
                             urlStatuses[attemptKey] = `JSON_ERROR_${parsed.statusCode}`;
@@ -221,10 +246,15 @@ async function transferCartToShufersal(cartItems) {
                             urlStatuses[attemptKey] = 'JSON_QTY_0';
                             continue;
                         }
+                        itemSuccess = true;
+                        urlStatuses[attemptKey] = 'SUCCESS_JSON';
+                        break;
                     }
 
-                    itemSuccess = true;
-                    break;
+                    // If it returned ok status but doesn't contain product code or valid JSON, it's not a success (probably empty cart template)
+                    console.warn(`Shufersal Injector: Response did not contain product code ${code} and was not valid JSON.`);
+                    urlStatuses[attemptKey] = 'FAILED_NOT_IN_FRAGMENT';
+                    continue;
                 } else {
                     console.warn(`Shufersal Injector: Failed response from ${url} for ${code}:`, text.substring(0, 300));
                 }
