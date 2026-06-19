@@ -1809,17 +1809,36 @@ async function compareCarts() {
                     if (barcodesList.length > 0) {
                         try {
                             const subQueryParams = new URLSearchParams({
-                                original_barcode: `in.(${barcodesList.join(',')})`,
-                                order: 'priority.asc'
+                                original_barcode: `in.(${barcodesList.join(',')})`
                             });
                             const subRes = await fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers });
                             if (subRes.ok) {
                                 const subs = await subRes.json();
                                 subs.forEach(s => {
-                                    if (!substitutesMap[s.original_barcode]) {
-                                        substitutesMap[s.original_barcode] = [];
+                                    const cleanSubs = [];
+                                    if (s.substitute_name_1) {
+                                        cleanSubs.push({
+                                            substitute_name: s.substitute_name_1,
+                                            rami_levy_code: s.rami_levy_code_1,
+                                            rami_levy_price: s.rami_levy_price_1,
+                                            victory_code: s.victory_code_1,
+                                            victory_price: s.victory_price_1,
+                                            shufersal_code: s.shufersal_code_1,
+                                            shufersal_price: s.shufersal_price_1
+                                        });
                                     }
-                                    substitutesMap[s.original_barcode].push(s);
+                                    if (s.substitute_name_2) {
+                                        cleanSubs.push({
+                                            substitute_name: s.substitute_name_2,
+                                            rami_levy_code: s.rami_levy_code_2,
+                                            rami_levy_price: s.rami_levy_price_2,
+                                            victory_code: s.victory_code_2,
+                                            victory_price: s.victory_price_2,
+                                            shufersal_code: s.shufersal_code_2,
+                                            shufersal_price: s.shufersal_price_2
+                                        });
+                                    }
+                                    substitutesMap[s.original_barcode] = cleanSubs;
                                 });
                             }
                         } catch (err) {
@@ -1865,8 +1884,7 @@ async function compareCarts() {
                     const fetchProducts = fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers }).then(r => r.ok ? r.json() : []);
                     
                     const subQueryParams = new URLSearchParams({
-                        original_barcode: `in.(${barcodesList.join(',')})`,
-                        order: 'priority.asc'
+                        original_barcode: `in.(${barcodesList.join(',')})`
                     });
                     const fetchSubs = fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers }).then(r => r.ok ? r.json() : []);
 
@@ -1874,10 +1892,30 @@ async function compareCarts() {
 
                     const substitutesMap = {};
                     subsList.forEach(s => {
-                        if (!substitutesMap[s.original_barcode]) {
-                            substitutesMap[s.original_barcode] = [];
+                        const cleanSubs = [];
+                        if (s.substitute_name_1) {
+                            cleanSubs.push({
+                                substitute_name: s.substitute_name_1,
+                                rami_levy_code: s.rami_levy_code_1,
+                                rami_levy_price: s.rami_levy_price_1,
+                                victory_code: s.victory_code_1,
+                                victory_price: s.victory_price_1,
+                                shufersal_code: s.shufersal_code_1,
+                                shufersal_price: s.shufersal_price_1
+                            });
                         }
-                        substitutesMap[s.original_barcode].push(s);
+                        if (s.substitute_name_2) {
+                            cleanSubs.push({
+                                substitute_name: s.substitute_name_2,
+                                rami_levy_code: s.rami_levy_code_2,
+                                rami_levy_price: s.rami_levy_price_2,
+                                victory_code: s.victory_code_2,
+                                victory_price: s.victory_price_2,
+                                shufersal_code: s.shufersal_code_2,
+                                shufersal_price: s.shufersal_price_2
+                            });
+                        }
+                        substitutesMap[s.original_barcode] = cleanSubs;
                     });
 
                     products.forEach(p => {
