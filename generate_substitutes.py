@@ -14,17 +14,15 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-USE_GEMINI = False
+USE_GEMINI = True
 GEMINI_API_KEY = "AIzaSyCu_EXWBvOSXoMn_9lqB_e3JFm7wZ702Bk"
-
-DB_PASSWORD = None
 
 # Load keys from config.json if available
 if os.path.exists('config.json'):
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
             cfg = json.load(f)
-            if cfg.get('gemini_api_key'):
+            if cfg.get('gemini_api_key') and cfg['gemini_api_key'] != "YOUR_GEMINI_API_KEY":
                 GEMINI_API_KEY = cfg['gemini_api_key']
             if cfg.get('supabase_db_password') and cfg['supabase_db_password'] != "YOUR_SUPABASE_DATABASE_PASSWORD":
                 DB_PASSWORD = cfg['supabase_db_password']
@@ -74,18 +72,19 @@ def ask_gemini_for_substitutes(original_name, candidates):
     if not candidates:
         return None, None
 
+    # We use gemini-2.0-flash as the default model
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     
     candidate_list = "\n".join([f"{i+1}. {c['name']}" for i, c in enumerate(candidates)])
     
     prompt = f"""אתה עוזר לבחור מוצרים חלופיים בסופרמרקט.
-בהינתן מוצר מקורי ורשימת מוצרים אפשריים, בחר את 2 התחליפים הכי מתאים (עדיפות ראשונה ועדיפות שנייה).
+בהינתן מוצר מקורי ורשימת מוצרים אפשריים, בחר את 2 התחליפים הכי מתאימים (עדיפות ראשונה ועדיפות שנייה).
 
 כללים חשובים ביותר:
-1. התחליף חייב להיות אותו סוג מוצר בדיוק (למשל: פתיתים=פתיתים, תירס שימורים=תירס שימורים, קוקה קולה=קוקה קולה או מותג קולה אחר).
-2. אל תבחר תחליף לא מתאים! קוסקוס זה לא פתיתים! אטריות זה לא אורז! בירה שחורה זה לא בירה לבנה!
+1. בחר מוצר שהוא החלופה הכי טובה - מוצר דומה מבחינת סוג ושימוש, אך לא חייב להיות זהה לחלוטין (למשל: בירה ממותג X יכולה להחליף בירה ממותג Y).
+2. אל תבחר תחליף לא מתאים ששונה מהותית בקטגוריה (למשל קוסקוס זה לא פתיתים! אטריות זה לא אורז! בירה שחורה זה לא בירה לבנה! משחת שיניים זה לא מברשת שיניים!).
 3. אם יש רק תחליף מתאים אחד ברשימה, בחר אותו כעדיפות ראשונה, ועבור עדיפות שנייה בחר 0.
-4. אם אין אף חלופה מתאימה בכלל (המוצרים שונים מהותית או לא מהווים תחליף הולם), החזר 0 עבור שתי העדיפויות.
+4. אם אין אף חלופה מתאימה בכלל, החזר 0 עבור שתי העדיפויות.
 5. החזר את התשובה בפורמט של שני מספרים מופרדים בפסיק בלבד, ללא מילים נוספות. 
 לדוגמה:
 - אם הראשון והשלישי מתאימים: 1, 3
@@ -118,6 +117,12 @@ def ask_gemini_for_substitutes(original_name, candidates):
                 idx1 = int(digits[0])
                 sub1 = candidates[idx1 - 1] if 1 <= idx1 <= len(candidates) else None
                 return sub1, None
+        elif res.status_code == 403:
+            print(" (AI error: API key is invalid or leaked. Please update the gemini_api_key in config.json)", end="")
+        elif res.status_code == 429:
+            print(" (AI error: API rate limit/quota exceeded)", end="")
+        else:
+            print(f" (AI error: HTTP {res.status_code})", end="")
     except Exception as e:
         print(f" (AI error: {e})", end="")
     return None, None
@@ -262,15 +267,15 @@ def main():
     print("✅ Metadata pre-computed.")
 
     # 2. Select products to process
-    RUN_LIMIT = None  # Set to None to run on all products
+    RUN_LIMIT = 20  # Set to None to run on all products
     
     all_barcodes = list(all_products.keys())
     if RUN_LIMIT is not None:
         barcodes_to_run = all_barcodes[:RUN_LIMIT]
-        print(f"\n🚀 Processing first {RUN_LIMIT} products for substitutes (Local Mode)...")
+        print(f"\n🚀 Processing first {RUN_LIMIT} products for substitutes (AI Mode)...")
     else:
         barcodes_to_run = all_barcodes
-        print(f"\n🚀 Processing ALL {len(barcodes_to_run)} products for substitutes (Local Mode)...")
+        print(f"\n🚀 Processing ALL {len(barcodes_to_run)} products for substitutes (AI Mode)...")
     
     substitutes_to_insert = []
     
@@ -286,12 +291,6 @@ def main():
         sub1, sub2 = None, None
         if USE_GEMINI:
             sub1, sub2 = ask_gemini_for_substitutes(product['name'], candidates)
-            # Fallback to local similarity if Gemini fails
-            if not sub1 and candidates:
-                if candidates[0]['score'] >= 50:
-                    sub1 = candidates[0]
-                    if len(candidates) >= 2 and candidates[1]['score'] >= 45:
-                        sub2 = candidates[1]
         else:
             # Local matching engine (no API costs)
             if candidates:
