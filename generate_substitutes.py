@@ -16,6 +16,8 @@ if sys.platform == 'win32':
 
 GEMINI_API_KEY = "AIzaSyCu_EXWBvOSXoMn_9lqB_e3JFm7wZ702Bk"
 
+DB_PASSWORD = None
+
 # Load keys from config.json if available
 if os.path.exists('config.json'):
     try:
@@ -23,6 +25,8 @@ if os.path.exists('config.json'):
             cfg = json.load(f)
             if cfg.get('gemini_api_key'):
                 GEMINI_API_KEY = cfg['gemini_api_key']
+            if cfg.get('supabase_db_password') and cfg['supabase_db_password'] != "YOUR_SUPABASE_DATABASE_PASSWORD":
+                DB_PASSWORD = cfg['supabase_db_password']
     except Exception:
         pass
 
@@ -147,7 +151,10 @@ def main():
     print("🤖 מחולל תחליפים אוטומטי - Supabase Substitutes Generator")
     print("=" * 65)
     
-    password = getpass.getpass("Enter your Supabase database password: ")
+    global DB_PASSWORD
+    password = DB_PASSWORD
+    if not password:
+        password = getpass.getpass("Enter your Supabase database password: ")
 
     try:
         conn = pg8000.dbapi.connect(
