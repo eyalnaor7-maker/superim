@@ -73,22 +73,7 @@ async function findCandidatesFromDB(productName, targetStore) {
     }
 }
 
-async function findSubstitute(productName, targetStore = 'rami_levy') {
-    const candidates = await findCandidatesFromDB(productName, targetStore);
-    if (candidates && candidates.length > 0) {
-        const best = candidates[0];
-        const sourceWeight = extractWeight(productName);
-        let suggestedQty = 1;
-        if (sourceWeight) {
-            const subWeight = extractWeight(best.name);
-            if (subWeight && subWeight.unit === sourceWeight.unit && subWeight.value > 0) {
-                suggestedQty = Math.max(1, Math.round(sourceWeight.value / subWeight.value));
-            }
-        }
-        return { ...best, suggestedQty };
-    }
-    return null;
-}
+
 
 function findProductByName(searchName, pricesData) {
     const query = extractSearchQuery(searchName);
@@ -121,7 +106,6 @@ let GEMINI_API_KEY = '';
 const GEMINI_MODEL = 'gemini-2.0-flash-lite';
 let SUPABASE_URL = 'https://icdethibkzwzguwmfoef.supabase.co';
 let SUPABASE_ANON_KEY = '';
-let substitutionLog = [];
 let pricesData = {};
 
 try {
@@ -135,103 +119,7 @@ try {
         .catch(() => {});
 } catch(e) {}
 
-async function aiPickBestMatch(originalName, candidates) {
-    if (!GEMINI_API_KEY || candidates.length === 0) return null;
 
-    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
-    const prompt = `אתה עוזר להתאים מוצרי סופרמרקט. בהינתן מוצר מקורי ורשימת מוצרים מסופר אחר, בחר את התחליף הכי מתאים.
-
-כללים חשובים:
-- התחליף חייב להיות אותו סוג מוצר בדיוק (פתיתים=פתיתים, תירס שימורים=תירס שימורים)
-- מותג שונה זה בסדר בתנאי שהסוג זהה
-- עדיף אותו גודל/משקל
-- קוסקוס זה לא פתיתים! אטריות זה לא אורז!
-- החזר רק מספר אחד (1-${candidates.length}), או 0 אם אין התאמה מספיק טובה
-
-מוצר מקורי: "${originalName}"
-
-מוצרים זמינים:
-${candidateList}
-
-מספר:`;
-
-    try {
-        const resp = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.1, maxOutputTokens: 5 }
-                })
-            }
-        );
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-        const num = parseInt(text.replace(/[^\d]/g, ''));
-        if (num > 0 && num <= candidates.length) return candidates[num - 1];
-    } catch(e) {
-        console.warn('AI error:', e);
-    }
-    return null;
-}
-
-async function smartSearchRamiLevy(productName, excludeCode = null) {
-    let cleanName = productName;
-    for (const brand of BRAND_WORDS) {
-        cleanName = cleanName.replace(new RegExp(brand, 'gi'), '');
-    }
-    cleanName = cleanName.replace(/\s+/g, ' ').trim();
-
-    try {
-        const resp = await fetch('https://www.rami-levy.co.il/api/catalog', {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json, text/plain, */*',
-                'Content-Type': 'application/json;charset=UTF-8'
-            },
-            body: JSON.stringify({ q: cleanName, store: 331 })
-        });
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        if (!data.data || data.data.length === 0) return null;
-
-        const candidates = data.data
-            .filter(p => String(p.id) !== excludeCode)
-            .slice(0, 8)
-            .map(p => ({ code: String(p.id), name: p.name, price: p.price?.price || 0 }));
-
-        if (candidates.length === 0) return null;
-
-        const aiPick = await aiPickBestMatch(productName, candidates);
-        if (aiPick) return aiPick;
-
-        return candidates[0];
-    } catch(e) {}
-    return null;
-}
-
-async function smartSearchVictory(productName) {
-    const candidates = await findCandidatesFromDB(productName, 'victory');
-    if (!candidates || candidates.length === 0) return null;
-    const aiPick = await aiPickBestMatch(productName, candidates);
-    if (aiPick) return aiPick;
-    return candidates[0];
-}
-
-async function smartSearchMCK(productName) {
-    const candidates = await findCandidatesFromDB(productName, 'mck');
-    if (!candidates || candidates.length === 0) return null;
-    const aiPick = await aiPickBestMatch(productName, candidates);
-    if (aiPick) return aiPick;
-    return candidates[0];
-}
-
-function logSubstitution(original, substitute, store, reason) {
-    substitutionLog.push({ original, substitute, store, reason });
-}
 
 // ===== CHROME HELPERS =====
 function createHiddenTab(url) {
@@ -929,6 +817,86 @@ async function agentInsideCartEngine(itemsList) {
         }
     } catch(e) {}
     return [];
+}
+
+// ===== SHUFERSAL AGENT (runs inside hidden Shufersal window) =====
+async function agentShufersalAgent(items) {
+    const results = [];
+    const debug = {};
+
+    for (const item of items) {
+        const barcode = item.barcode;
+        const q = barcode.startsWith('P_') ? barcode : `P_${barcode}`;
+        try {
+            const response = await fetch(`/online/he/search?text=${encodeURIComponent(barcode)}`);
+            if (!response.ok) {
+                results.push({ barcode, outOfStock: true });
+                continue;
+            }
+            const htmlText = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlText, 'text/html');
+
+            // 1. Try search results list item matching the barcode
+            let card = doc.querySelector(`li[data-product-code="${q}"]`) || 
+                       doc.querySelector(`li[data-product-code="${barcode}"]`) ||
+                       doc.querySelector(`article.miglog-incart[data-product-code="${q}"]`) ||
+                       doc.querySelector(`article.miglog-incart[data-product-code="${barcode}"]`) ||
+                       doc.querySelector('li.miglog-prod') ||
+                       doc.querySelector('article.miglog-incart');
+
+            if (card) {
+                const priceElem = card.querySelector('.miglog-prod-totalPrize') ||
+                                  card.querySelector('.miglog-prod-totalPrice') ||
+                                  card.querySelector('.price') ||
+                                  card.querySelector('.total-price') ||
+                                  card.querySelector('.price-number');
+                if (priceElem) {
+                    const priceText = priceElem.innerText.replace(/[^\d.]/g, '');
+                    let price = parseFloat(priceText) || 0;
+
+                    const discountElem = card.querySelector('.miglog-prod-totalDiscount') || card.querySelector('.discount');
+                    if (discountElem) {
+                        const discount = parseFloat(discountElem.innerText.replace(/[^\d.]/g, '')) || 0;
+                        price = price - discount;
+                    }
+
+                    results.push({
+                        barcode,
+                        price,
+                        finalTotal: price * item.quantity,
+                        outOfStock: price <= 0
+                    });
+                    continue;
+                }
+            }
+
+            // 2. Try single product page details (if redirected)
+            const priceElem = doc.querySelector('.product-price') || 
+                              doc.querySelector('.sp-price') || 
+                              doc.querySelector('.price') ||
+                              doc.querySelector('.price-number') ||
+                              doc.querySelector('.current-price');
+            if (priceElem) {
+                const priceText = priceElem.innerText.replace(/[^\d.]/g, '');
+                let price = parseFloat(priceText) || 0;
+                
+                results.push({
+                    barcode,
+                    price,
+                    finalTotal: price * item.quantity,
+                    outOfStock: price <= 0
+                });
+                continue;
+            }
+
+            results.push({ barcode, outOfStock: true });
+        } catch (e) {
+            console.error('[Shufersal Agent] Error fetching barcode ' + barcode, e);
+            results.push({ barcode, outOfStock: true });
+        }
+    }
+    return { results, debug };
 }
 
 // ===== VICTORY AGENT (runs inside hidden Victory window) =====
@@ -1813,48 +1781,6 @@ async function compareCarts() {
                     if (!res.ok) throw new Error(`Supabase query failed: ${res.statusText}`);
                     const storeProducts = await res.json();
 
-                    const barcodesList = storeProducts.map(sp => sp.products?.barcode).filter(Boolean);
-                    let substitutesMap = {};
-                    if (barcodesList.length > 0) {
-                        try {
-                            const subQueryParams = new URLSearchParams({
-                                original_barcode: `in.(${barcodesList.join(',')})`
-                            });
-                            const subRes = await fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers });
-                            if (subRes.ok) {
-                                const subs = await subRes.json();
-                                subs.forEach(s => {
-                                    const cleanSubs = [];
-                                    if (s.substitute_name_1) {
-                                        cleanSubs.push({
-                                            substitute_name: s.substitute_name_1,
-                                            rami_levy_code: s.rami_levy_code_1,
-                                            rami_levy_price: s.rami_levy_price_1,
-                                            victory_code: s.victory_code_1,
-                                            victory_price: s.victory_price_1,
-                                            shufersal_code: s.shufersal_code_1,
-                                            shufersal_price: s.shufersal_price_1
-                                        });
-                                    }
-                                    if (s.substitute_name_2) {
-                                        cleanSubs.push({
-                                            substitute_name: s.substitute_name_2,
-                                            rami_levy_code: s.rami_levy_code_2,
-                                            rami_levy_price: s.rami_levy_price_2,
-                                            victory_code: s.victory_code_2,
-                                            victory_price: s.victory_price_2,
-                                            shufersal_code: s.shufersal_code_2,
-                                            shufersal_price: s.shufersal_price_2
-                                        });
-                                    }
-                                    substitutesMap[s.original_barcode] = cleanSubs;
-                                });
-                            }
-                        } catch (err) {
-                            console.error("שגיאה בטעינת תחליפים מ-Supabase:", err);
-                        }
-                    }
-
                     storeProducts.forEach(sp => {
                         const p = sp.products;
                         if (!p) return;
@@ -1866,7 +1792,7 @@ async function compareCarts() {
                             rami_levy_code: null,
                             victory_code: null,
                             victory_price: null,
-                            substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
+                            substitutes: []
                         };
                         if (p.store_products) {
                             p.store_products.forEach(innerSp => {
@@ -1899,42 +1825,7 @@ async function compareCarts() {
                     barcode: `in.(${barcodesList.join(',')})`
                 });
                 try {
-                    const fetchProducts = fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers }).then(r => r.ok ? r.json() : []);
-                    
-                    const subQueryParams = new URLSearchParams({
-                        original_barcode: `in.(${barcodesList.join(',')})`
-                    });
-                    const fetchSubs = fetch(`${SUPABASE_URL}/rest/v1/product_substitutes_view?${subQueryParams}`, { headers }).then(r => r.ok ? r.json() : []);
-
-                    const [products, subsList] = await Promise.all([fetchProducts, fetchSubs]);
-
-                    const substitutesMap = {};
-                    subsList.forEach(s => {
-                        const cleanSubs = [];
-                        if (s.substitute_name_1) {
-                            cleanSubs.push({
-                                substitute_name: s.substitute_name_1,
-                                rami_levy_code: s.rami_levy_code_1,
-                                rami_levy_price: s.rami_levy_price_1,
-                                victory_code: s.victory_code_1,
-                                victory_price: s.victory_price_1,
-                                shufersal_code: s.shufersal_code_1,
-                                shufersal_price: s.shufersal_price_1
-                            });
-                        }
-                        if (s.substitute_name_2) {
-                            cleanSubs.push({
-                                substitute_name: s.substitute_name_2,
-                                rami_levy_code: s.rami_levy_code_2,
-                                rami_levy_price: s.rami_levy_price_2,
-                                victory_code: s.victory_code_2,
-                                victory_price: s.victory_price_2,
-                                shufersal_code: s.shufersal_code_2,
-                                shufersal_price: s.shufersal_price_2
-                            });
-                        }
-                        substitutesMap[s.original_barcode] = cleanSubs;
-                    });
+                    const products = await fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers }).then(r => r.ok ? r.json() : []);
 
                     products.forEach(p => {
                         const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
@@ -1945,7 +1836,7 @@ async function compareCarts() {
                             rami_levy_code: null,
                             victory_code: null,
                             victory_price: null,
-                            substitutes: substitutesMap[p.barcode] || substitutesMap[xmlKey] || []
+                            substitutes: []
                         };
                         if (p.store_products) {
                             p.store_products.forEach(sp => {
@@ -1967,6 +1858,7 @@ async function compareCarts() {
         // 3. Map products
         const matchedItems = [];
         const missingItems = [];
+        const itemsForShufersal = [];
         const itemsForRamiLevy = [];
         const itemsForVictory = [];
         const itemsForMCK = [];
@@ -1995,23 +1887,6 @@ async function compareCarts() {
             }
 
             if (dbItem) {
-                let substituteData = null;
-                if (dbItem.substitutes && dbItem.substitutes.length > 0) {
-                    const targetStore = compareRamiLevy ? 'rami_levy' : 'victory';
-                    for (const s of dbItem.substitutes) {
-                        const codeKey = `${targetStore}_code`;
-                        const priceKey = `${targetStore}_price`;
-                        if (s[codeKey] && s[priceKey] != null) {
-                            substituteData = {
-                                code: s[codeKey],
-                                name: s.substitute_name,
-                                price: parseFloat(s[priceKey])
-                            };
-                            break;
-                        }
-                    }
-                }
-
                 let s_total = activeStore === 'shufersal' ? item.shufersal_total : (dbItem.shufersal_price || 0) * item.quantity;
                 let rl_live_total = activeStore === 'ramiLevy' ? item.rami_levy_total : null;
                 let v_live_total = activeStore === 'victory' ? item.victory_total : null;
@@ -2022,16 +1897,25 @@ async function compareCarts() {
                     quantity: item.quantity,
                     shufersal_code: shufersalCode,
                     shufersal_total: s_total,
+                    shufersal_price_unit: dbItem.shufersal_price != null ? dbItem.shufersal_price : null,
                     backup_target_code: dbItem.rami_levy_code ? String(dbItem.rami_levy_code) : null,
+                    rami_levy_price_unit: dbItem.rami_levy_price != null ? dbItem.rami_levy_price : null,
                     victory_code: dbItem.victory_code || null,
                     victory_retailer_id: dbItem.victory_retailer_id || null,
                     victory_price_unit: dbItem.victory_price != null ? dbItem.victory_price : null,
-                    substitute: substituteData,
+                    mck_price_unit: dbItem.machsanei_hashuk_price != null ? dbItem.machsanei_hashuk_price : null,
                     rl_live_total: rl_live_total,
                     v_live_total: v_live_total,
-                    mck_live_total: mck_live_total,
-                    substitutes: dbItem.substitutes || []
+                    mck_live_total: mck_live_total
                 });
+
+                if (activeStore !== 'shufersal') {
+                    itemsForShufersal.push({
+                        barcode: cleanBarcode,
+                        name: item.name,
+                        quantity: item.quantity
+                    });
+                }
 
                 if (activeStore !== 'ramiLevy' && dbItem.rami_levy_code) {
                     itemsForRamiLevy.push({ id: String(dbItem.rami_levy_code), quantity: item.quantity });
@@ -2060,6 +1944,20 @@ async function compareCarts() {
         });
 
         // We do not return early even if matchedItems.length === 0, so that active store's scanned cart total is still rendered
+
+        // 3.8. Fetch Shufersal prices live
+        let shufersalResults = [];
+        let shufersalDebug = null;
+        if (activeStore !== 'shufersal' && compareShufersal && itemsForShufersal.length > 0) {
+            statusDiv.innerHTML = 'בודק מחירים בשופרסל...';
+            try {
+                const shufersalResponse = await fetchInHiddenWindow('https://www.shufersal.co.il/online/he/', agentShufersalAgent, [itemsForShufersal], 3500);
+                if (shufersalResponse?.results) {
+                    shufersalResults = shufersalResponse.results;
+                    shufersalDebug = shufersalResponse.debug || null;
+                }
+            } catch(e) {}
+        }
 
         // 4. Fetch Rami Levy prices
         let ramiLevyResults = [];
@@ -2104,39 +2002,77 @@ async function compareCarts() {
         const itemsToDeleteCodes = new Set();
 
         matchedItems.forEach(item => {
+            // Shufersal
+            const barcode = item.shufersal_code.replace('P_', '');
+            let shufersalTotal = null;
+            let shufersalSource = 'database';
+            if (activeStore === 'shufersal') {
+                shufersalTotal = item.shufersal_total;
+                shufersalSource = 'live';
+            } else if (compareShufersal) {
+                const shufersalLive = shufersalResults.find(r => r.barcode === barcode);
+                if (shufersalLive && !shufersalLive.outOfStock) {
+                    shufersalTotal = shufersalLive.finalTotal;
+                    shufersalSource = 'live';
+                } else if (item.shufersal_price_unit != null) {
+                    shufersalTotal = item.shufersal_price_unit * item.quantity;
+                    shufersalSource = 'database';
+                }
+            }
+
             // Rami Levy
             let ramiTotal = null;
+            let ramiSource = 'database';
             if (activeStore === 'ramiLevy') {
                 ramiTotal = item.rl_live_total;
+                ramiSource = 'live';
             } else if (compareRamiLevy) {
                 const liveData = ramiLevyResults.find(r => r.id === item.backup_target_code);
-                ramiTotal = liveData ? liveData.finalTotal : null;
+                if (liveData && !liveData.outOfStock) {
+                    ramiTotal = liveData.finalTotal;
+                    ramiSource = 'live';
+                } else if (item.rami_levy_price_unit != null) {
+                    ramiTotal = item.rami_levy_price_unit * item.quantity;
+                    ramiSource = 'database';
+                }
             }
 
             // Victory
-            const barcode = item.shufersal_code.replace('P_', '');
             let victoryTotal = null;
+            let victorySource = 'database';
             if (activeStore === 'victory') {
                 victoryTotal = item.v_live_total;
+                victorySource = 'live';
             } else if (compareVictory) {
                 const victoryLive = victoryResults.find(r => r.barcode === barcode);
-                victoryTotal = victoryLive
-                    ? (victoryLive.outOfStock ? null : victoryLive.finalTotal)
-                    : (item.victory_price_unit != null ? item.victory_price_unit * item.quantity : null);
+                if (victoryLive && !victoryLive.outOfStock) {
+                    victoryTotal = victoryLive.finalTotal;
+                    victorySource = 'live';
+                } else if (item.victory_price_unit != null) {
+                    victoryTotal = item.victory_price_unit * item.quantity;
+                    victorySource = 'database';
+                }
             }
 
             // Machsanei HaShuk
             let mckTotal = null;
+            let mckSource = 'database';
             let mckLive = null;
             if (activeStore === 'machsaneiHashuk') {
                 mckTotal = item.mck_live_total;
+                mckSource = 'live';
             } else if (compareMCK) {
                 mckLive = mckResults.find(r => r.barcode === barcode);
-                mckTotal = mckLive
-                    ? (mckLive.outOfStock ? null : mckLive.finalTotal)
-                    : null;
+                if (mckLive && !mckLive.outOfStock) {
+                    mckTotal = mckLive.finalTotal;
+                    mckSource = 'live';
+                } else if (item.mck_price_unit != null) {
+                    mckTotal = item.mck_price_unit * item.quantity;
+                    mckSource = 'database';
+                }
             }
 
+            const isShufersalMissing = compareShufersal && (!shufersalTotal || shufersalTotal <= 0) && activeStore !== 'shufersal';
             const isRamiMissing = compareRamiLevy && (!ramiTotal || ramiTotal <= 0) && activeStore !== 'ramiLevy';
             const isVictoryMissing = compareVictory && (!victoryTotal || victoryTotal <= 0) && activeStore !== 'victory';
             const isMCKMissing = compareMCK && (!mckTotal || mckTotal <= 0) && activeStore !== 'machsaneiHashuk';
@@ -2150,173 +2086,36 @@ async function compareCarts() {
                 victory_retailer_id: item.victory_retailer_id || item.victory_code,
                 mck_code: mckLive?.retailerProductId || null,
                 mck_retailer_id: mckLive?.retailerProductId || null,
-                shufersal_total: item.shufersal_total,
-                rami_levy_total: compareRamiLevy ? (ramiTotal || 0) : null,
+                shufersal_total: compareShufersal ? shufersalTotal : null,
+                rami_levy_total: compareRamiLevy ? ramiTotal : null,
                 victory_total: compareVictory ? victoryTotal : null,
                 mck_total: compareMCK ? mckTotal : null,
+                isShufersalMissing,
                 isRamiMissing,
                 isVictoryMissing,
                 isMCKMissing,
-                substitutes: item.substitutes || []
+                shufersal_price_source: shufersalSource,
+                rami_price_source: ramiSource,
+                victory_price_source: victorySource,
+                mck_price_source: mckSource
             };
 
-            if (isRamiMissing || isVictoryMissing || isMCKMissing) {
+            const isMissingEverywhere = (!compareShufersal || isShufersalMissing) &&
+                                        (!compareRamiLevy || isRamiMissing) &&
+                                        (!compareVictory || isVictoryMissing) &&
+                                        (!compareMCK || isMCKMissing);
+
+            if (isMissingEverywhere) {
                 outOfStockItems.push(obj);
-                if (isRamiMissing) itemsToDeleteCodes.add(item.backup_target_code);
             } else {
                 inStockItems.push(obj);
             }
+            if (isRamiMissing && obj.targetCode) {
+                itemsToDeleteCodes.add(obj.targetCode);
+            }
         });
 
-        // 7. AI-powered automatic substitute resolution
-        statusDiv.innerHTML = '🧠 AI מנתח ומתאים תחליפים...';
-
-        const resolveItem = async (item, isMissing) => {
-            // Do not resolve/substitute for the active store itself!
-            if (activeStore === 'ramiLevy') item.isRamiMissing = false;
-            if (activeStore === 'victory') item.isVictoryMissing = false;
-            if (activeStore === 'machsaneiHashuk') item.isMCKMissing = false;
-
-            // Rami Levy
-            if (compareRamiLevy && activeStore !== 'ramiLevy' && (item.isRamiMissing || isMissing)) {
-                let sub = null;
-                // Try pre-approved substitutes first
-                if (item.substitutes && item.substitutes.length > 0) {
-                    for (const s of item.substitutes) {
-                        if (s.rami_levy_code && s.rami_levy_price != null && s.rami_levy_price > 0) {
-                            sub = {
-                                code: s.rami_levy_code,
-                                name: s.substitute_name,
-                                price: parseFloat(s.rami_levy_price)
-                            };
-                            break;
-                        }
-                    }
-                }
-                
-                // If no pre-approved, try live search
-                if (!sub) sub = await smartSearchRamiLevy(item.name, item.targetCode);
-                // If still none, try DB similarity search
-                if (!sub) sub = await findSubstitute(item.name, 'rami_levy');
-                
-                if (sub) {
-                    if (!sub.suggestedQty) {
-                        const srcW = extractWeight(item.name);
-                        const subW = extractWeight(sub.name);
-                        if (srcW && subW && srcW.unit === subW.unit && subW.value > 0) {
-                            sub.suggestedQty = Math.max(1, Math.round(srcW.value / subW.value));
-                        }
-                    }
-                    logSubstitution(item.name, sub.name, 'רמי לוי', isMissing ? 'לא במאגר' : 'חסר במלאי');
-                    const subQty = (sub.suggestedQty || 1) * item.quantity;
-                    item.rami_levy_total = sub.price * subQty;
-                    item.targetCode = sub.code;
-                    item.isRamiMissing = false;
-                }
-            }
-            
-            // Victory
-            if (compareVictory && activeStore !== 'victory' && (item.isVictoryMissing || isMissing)) {
-                let sub = null;
-                // Try pre-approved substitutes first
-                if (item.substitutes && item.substitutes.length > 0) {
-                    for (const s of item.substitutes) {
-                        if (s.victory_code && s.victory_price != null && s.victory_price > 0) {
-                            sub = {
-                                code: s.victory_code,
-                                name: s.substitute_name,
-                                price: parseFloat(s.victory_price)
-                            };
-                            break;
-                        }
-                    }
-                }
-                
-                // If no pre-approved, try live search
-                if (!sub) sub = await smartSearchVictory(item.name);
-                // If still none, try DB similarity search
-                if (!sub) sub = await findSubstitute(item.name, 'victory');
-                
-                if (sub) {
-                    if (!sub.suggestedQty) {
-                        const srcW = extractWeight(item.name);
-                        const subW = extractWeight(sub.name);
-                        if (srcW && subW && srcW.unit === subW.unit && subW.value > 0) {
-                            sub.suggestedQty = Math.max(1, Math.round(srcW.value / subW.value));
-                        }
-                    }
-                    logSubstitution(item.name, sub.name, 'ויקטורי', isMissing ? 'לא במאגר' : 'חסר במלאי');
-                    const subQty = (sub.suggestedQty || 1) * item.quantity;
-                    item.victory_total = sub.price * subQty;
-                    item.victory_code = sub.code;
-                    item.victory_retailer_id = sub.code;
-                    item.isVictoryMissing = false;
-                }
-            }
-
-            // Machsanei HaShuk
-            if (compareMCK && activeStore !== 'machsaneiHashuk' && (item.isMCKMissing || isMissing)) {
-                let sub = await smartSearchMCK(item.name);
-                if (!sub) sub = await findSubstitute(item.name, 'mck');
-                if (sub) {
-                    if (!sub.suggestedQty) {
-                        const srcW = extractWeight(item.name);
-                        const subW = extractWeight(sub.name);
-                        if (srcW && subW && srcW.unit === subW.unit && subW.value > 0) {
-                            sub.suggestedQty = Math.max(1, Math.round(srcW.value / subW.value));
-                        }
-                    }
-                    logSubstitution(item.name, sub.name, 'מחסני השוק', isMissing ? 'לא במאגר' : 'חסר במלאי');
-                    const subQty = (sub.suggestedQty || 1) * item.quantity;
-                    item.mck_total = sub.price * subQty;
-                    item.mck_code = sub.code;
-                    item.mck_retailer_id = sub.code;
-                    item.isMCKMissing = false;
-                }
-            }
-        };
-
-        for (let i = outOfStockItems.length - 1; i >= 0; i--) {
-            const item = outOfStockItems[i];
-            await resolveItem(item, false);
-            
-            const rOk = !compareRamiLevy || !item.isRamiMissing;
-            const vOk = !compareVictory || !item.isVictoryMissing;
-            const mOk = !compareMCK || !item.isMCKMissing;
-            if (rOk && vOk && mOk) {
-                inStockItems.push(item);
-                outOfStockItems.splice(i, 1);
-            }
-        }
-
-        for (let i = missingItems.length - 1; i >= 0; i--) {
-            const item = missingItems[i];
-            item.isRamiMissing = true;
-            item.isVictoryMissing = true;
-            item.isMCKMissing = true;
-            await resolveItem(item, true);
-            
-            const rOk = !compareRamiLevy || !item.isRamiMissing;
-            const vOk = !compareVictory || !item.isVictoryMissing;
-            const mOk = !compareMCK || !item.isMCKMissing;
-            if (rOk && vOk && mOk) {
-                inStockItems.push({
-                    name: item.name,
-                    quantity: item.quantity,
-                    shufersal_code: item.code || item.shufersal_code || '',
-                    targetCode: item.targetCode,
-                    victory_code: item.victory_code,
-                    victory_retailer_id: item.victory_retailer_id || item.victory_code,
-                    mck_code: item.mck_code || null,
-                    mck_retailer_id: item.mck_retailer_id || null,
-                    shufersal_total: item.shufersal_total || 0,
-                    rami_levy_total: item.rami_levy_total || null,
-                    victory_total: item.victory_total || null,
-                    mck_total: item.mck_total || null
-                });
-                missingItems.splice(i, 1);
-            }
-        }
+        statusDiv.innerHTML = 'מנתח נתוני עגלה...';
 
         renderUI();
 
@@ -2325,6 +2124,21 @@ async function compareCarts() {
             console.log("=== renderUI: Debug Cart Details ===");
             console.log("inStockItems:", JSON.parse(JSON.stringify(inStockItems)));
             console.log("missingItems:", JSON.parse(JSON.stringify(missingItems)));
+
+            // Analyze price sources
+            let shufersalHasDb = false;
+            let ramiHasDb = false;
+            let victoryHasDb = false;
+            let mckHasDb = false;
+
+            const checkSources = (item) => {
+                if (item.shufersal_price_source === 'database') shufersalHasDb = true;
+                if (item.rami_price_source === 'database') ramiHasDb = true;
+                if (item.victory_price_source === 'database') victoryHasDb = true;
+                if (item.mck_price_source === 'database') mckHasDb = true;
+            };
+            inStockItems.forEach(checkSources);
+            outOfStockItems.forEach(checkSources);
 
             let totalShufersal = 0, totalRamiLevy = 0, totalVictory = 0, totalMCK = 0;
             let shufersalCount = 0, ramiCount = 0, victoryCount = 0, mckCount = 0;
@@ -2382,9 +2196,10 @@ async function compareCarts() {
             const storesWithData = [];
             if (activeStore === 'shufersal' || compareShufersal) {
                 const isShufersalActive = activeStore === 'shufersal';
+                const shufersalComment = shufersalHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const shufersalInfo = isShufersalActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (shufersalCount === rawCartItems.length ? 'ממאגר מחירים' : `ממאגר מחירים (${shufersalCount}/${rawCartItems.length} מוצרים)`);
+                    : (shufersalCount === rawCartItems.length ? shufersalComment : `${shufersalComment} (${shufersalCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
                     key: 'shufersal', name: 'שופרסל', total: totalShufersal,
                     info: shufersalInfo, hasData: isShufersalActive ? true : (shufersalCount > 0)
@@ -2393,9 +2208,10 @@ async function compareCarts() {
 
             if (compareRamiLevy) {
                 const isRamiActive = activeStore === 'ramiLevy';
+                const ramiComment = ramiHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const ramiInfo = isRamiActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (ramiCount === rawCartItems.length ? 'מחיר חי' : `מחיר חי (${ramiCount}/${rawCartItems.length} מוצרים)`);
+                    : (ramiCount === rawCartItems.length ? ramiComment : `${ramiComment} (${ramiCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
                     key: 'ramiLevy', name: 'רמי לוי', total: totalRamiLevy,
                     info: ramiInfo,
@@ -2405,9 +2221,10 @@ async function compareCarts() {
 
             if (compareVictory) {
                 const isVictoryActive = activeStore === 'victory';
+                const victoryComment = victoryHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const victoryInfo = isVictoryActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (victoryCount === rawCartItems.length ? 'מחיר חי' : `מחיר חי (${victoryCount}/${rawCartItems.length} מוצרים)`);
+                    : (victoryCount === rawCartItems.length ? victoryComment : `${victoryComment} (${victoryCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
                     key: 'victory', name: 'ויקטורי', total: totalVictory,
                     info: victoryInfo,
@@ -2418,11 +2235,12 @@ async function compareCarts() {
 
             if (compareMCK) {
                 const isMCKActive = activeStore === 'machsaneiHashuk';
+                const mckComment = mckHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const mckInfo = isMCKActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (mckCount === rawCartItems.length ? 'מחיר חי' : `מחיר חי (${mckCount}/${rawCartItems.length} מוצרים)`);
+                    : (mckCount === rawCartItems.length ? mckComment : `${mckComment} (${mckCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
-                    key: 'mck', name: 'מחסני השוק', total: totalMCK,
+                    key: 'machsaneiHashuk', name: 'מחסני השוק', total: totalMCK,
                     info: mckInfo,
                     hasData: isMCKActive ? true : (mckCount > 0),
                     debugInfo: isMCKActive ? null : (mckResults.length === 0 ? (mckDebug?.noToken ? 'לא מחובר למחסני השוק' : (mckDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף')) : null)
@@ -2465,7 +2283,7 @@ async function compareCarts() {
                     btnHtml = `<button class="store-btn dark" id="switchToRamiLevy">עבור לרמי לוי</button>`;
                 } else if (store.key === 'victory') {
                     btnHtml = `<button class="store-btn blue" id="switchToVictory">${store.hasData ? 'עבור לויקטורי' : 'בחר ויקטורי'}</button>`;
-                } else if (store.key === 'mck') {
+                } else if (store.key === 'machsaneiHashuk') {
                     btnHtml = `<button class="store-btn orange" id="switchToMCK">${store.hasData ? 'עבור למחסני השוק' : 'בחר מחסני השוק'}</button>`;
                 } else if (store.key === 'shufersal') {
                     btnHtml = `<button class="store-btn" style="background:#e8132b; color:white; border-color:#e8132b;" id="switchToShufersal">עבור לשופרסל</button>`;
@@ -2504,10 +2322,10 @@ async function compareCarts() {
             if (inStockItems.length > 0) {
                 html += '<div class="section-label">מוצרים זמינים</div><div class="product-list">';
                 inStockItems.forEach(item => {
-                    const sText = (activeStore === 'shufersal' || compareShufersal) ? `<span class="p-shufersal">${formatPrice(item.shufersal_total)}</span>` : '';
-                    const rText = (compareRamiLevy && item.rami_levy_total !== null) ? `<span class="p-rami">${formatPrice(item.rami_levy_total)}</span>` : '';
-                    const vText = (compareVictory && item.victory_total !== null && item.victory_total !== undefined) ? `<span class="p-victory">${formatPrice(item.victory_total)}</span>` : '';
-                    const mText = (compareMCK && item.mck_total !== null && item.mck_total !== undefined) ? `<span class="p-mck">${formatPrice(item.mck_total)}</span>` : '';
+                    const sText = (activeStore === 'shufersal' || compareShufersal) ? `<span class="p-shufersal">${(item.shufersal_total && item.shufersal_total > 0) ? formatPrice(item.shufersal_total) : '-'}</span>` : '';
+                    const rText = (compareRamiLevy) ? `<span class="p-rami">${(item.rami_levy_total && item.rami_levy_total > 0) ? formatPrice(item.rami_levy_total) : '-'}</span>` : '';
+                    const vText = (compareVictory) ? `<span class="p-victory">${(item.victory_total && item.victory_total > 0) ? formatPrice(item.victory_total) : '-'}</span>` : '';
+                    const mText = (compareMCK) ? `<span class="p-mck">${(item.mck_total && item.mck_total > 0) ? formatPrice(item.mck_total) : '-'}</span>` : '';
                     html += `
                     <div class="product-item">
                         <span class="product-name">${item.name} x${item.quantity}</span>
@@ -2520,34 +2338,17 @@ async function compareCarts() {
                 html += '</div>';
             }
 
-            if (substitutionLog.length > 0) {
-                html += `
-                <div class="details-section" style="margin-top:8px;">
-                    <button class="details-toggle" id="subLogToggle">
-                        <span>📝 פירוט החלפות חכמות (${substitutionLog.length})</span>
-                        <span class="toggle-arrow" id="subLogArrow">▼</span>
-                    </button>
-                    <div class="details-content" id="subLogContent">
-                        <div class="out-section">`;
-                substitutionLog.forEach(log => {
-                    html += `
-                        <div class="out-item" style="border-right: 3px solid #2e7d32;">
-                            <div class="out-item-name" style="text-decoration: line-through; color: #6b7280;">${log.original}</div>
-                            <div class="out-item-sub" style="color: #2e7d32; font-weight: bold;">🔄 הוחלף ב: ${log.substitute}</div>
-                            <div style="font-size: 11px; color: #9ca3af; margin-top: 4px;">סופר: ${log.store} (${log.reason})</div>
-                        </div>`;
-                });
-                html += `       </div>
-                    </div>
-                </div>`;
-            }
-
             if (outOfStockItems.length > 0) {
                 html += '<div class="section-label">חסר במלאי לחלוטין</div><div class="out-section">';
                 outOfStockItems.forEach((item) => {
                     html += `<div class="out-item"><div class="out-item-name">${item.name} x${item.quantity}</div>`;
-                    const missingStores = [item.isRamiMissing ? 'רמי לוי' : '', item.isVictoryMissing ? 'ויקטורי' : '', item.isMCKMissing ? 'מחסני השוק' : ''].filter(Boolean).join(', ');
-                    html += `<div class="out-item-sub"><span style="color:#9ca3af; font-size:12px;">לא נמצא תחליף מתאים ב-${missingStores}</span></div></div>`;
+                    const missingStores = [
+                        (compareShufersal && item.isShufersalMissing) ? 'שופרסל' : '',
+                        (compareRamiLevy && item.isRamiMissing) ? 'רמי לוי' : '',
+                        (compareVictory && item.isVictoryMissing) ? 'ויקטורי' : '',
+                        (compareMCK && item.isMCKMissing) ? 'מחסני השוק' : ''
+                    ].filter(Boolean).join(', ');
+                    html += `<div class="out-item-sub"><span style="color:#9ca3af; font-size:12px;">חסר ב: ${missingStores}</span></div></div>`;
                 });
                 html += '</div>';
             }
@@ -2588,27 +2389,47 @@ async function compareCarts() {
                 document.getElementById('toggleArrow').classList.toggle('open');
             });
 
-            document.getElementById('subLogToggle')?.addEventListener('click', () => {
-                document.getElementById('subLogContent').classList.toggle('open');
-                document.getElementById('subLogArrow').classList.toggle('open');
-            });
+
 
             document.getElementById('switchToRamiLevy')?.addEventListener('click', () => {
-                chrome.storage.local.set({ savedCart: finalCartToTransfer }, () => {
+                const ramiCart = [];
+                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
+                allSources.forEach(i => {
+                    if (!i.isRamiMissing && i.targetCode && i.quantity > 0) {
+                        ramiCart.push({
+                            targetCode: i.targetCode,
+                            quantity: i.quantity
+                        });
+                    }
+                });
+
+                // Add delete payload for any codes in itemsToDeleteCodes that are not in the new cart
+                const activeCodes = new Set(ramiCart.map(i => i.targetCode));
+                Array.from(itemsToDeleteCodes)
+                    .filter(code => code && !activeCodes.has(code))
+                    .forEach(code => {
+                        ramiCart.push({ targetCode: code, quantity: 0 });
+                    });
+
+                chrome.storage.local.set({ savedCart: ramiCart }, () => {
                     chrome.tabs.create({ url: 'https://www.rami-levy.co.il/he' });
                 });
             });
 
             document.getElementById('switchToVictory')?.addEventListener('click', () => {
-                const victoryCart = finalCartToTransfer.filter(i => i.quantity > 0).map(i => {
-                    const cleanBarcode = i.shufersal_code.replace('P_', '');
-                    return {
-                        name: i.name, amount: i.quantity, quantity: i.quantity,
-                        shufersal_code: i.shufersal_code,
-                        barcode: cleanBarcode,
-                        victory_code: i.victory_code || null,
-                        victory_retailer_id: i.victory_retailer_id || null
-                    };
+                const victoryCart = [];
+                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
+                allSources.forEach(i => {
+                    if (!i.isVictoryMissing && (i.victory_code || i.victory_retailer_id) && i.quantity > 0) {
+                        const cleanBarcode = i.shufersal_code ? i.shufersal_code.replace('P_', '') : '';
+                        victoryCart.push({
+                            name: i.name, amount: i.quantity, quantity: i.quantity,
+                            shufersal_code: i.shufersal_code || '',
+                            barcode: cleanBarcode,
+                            victory_code: i.victory_code || i.victory_retailer_id || null,
+                            victory_retailer_id: i.victory_retailer_id || i.victory_code || null
+                        });
+                    }
                 });
                 chrome.storage.local.set({ savedCartVictory: victoryCart }, () => {
                     chrome.tabs.create({ url: 'https://www.victoryonline.co.il' });
@@ -2616,15 +2437,19 @@ async function compareCarts() {
             });
 
             document.getElementById('switchToMCK')?.addEventListener('click', () => {
-                const mckCart = finalCartToTransfer.filter(i => i.quantity > 0).map(i => {
-                    const cleanBarcode = i.shufersal_code.replace('P_', '');
-                    return {
-                        name: i.name, amount: i.quantity, quantity: i.quantity,
-                        shufersal_code: i.shufersal_code,
-                        barcode: cleanBarcode,
-                        mck_code: i.mck_code || null,
-                        retailerProductId: i.mck_retailer_id || null
-                    };
+                const mckCart = [];
+                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
+                allSources.forEach(i => {
+                    if (!i.isMCKMissing && (i.mck_code || i.mck_retailer_id) && i.quantity > 0) {
+                        const cleanBarcode = i.shufersal_code ? i.shufersal_code.replace('P_', '') : '';
+                        mckCart.push({
+                            name: i.name, amount: i.quantity, quantity: i.quantity,
+                            shufersal_code: i.shufersal_code || '',
+                            barcode: cleanBarcode,
+                            mck_code: i.mck_code || i.mck_retailer_id || null,
+                            retailerProductId: i.mck_retailer_id || i.mck_code || null
+                        });
+                    }
                 });
                 chrome.storage.local.set({ savedCartMCK: mckCart }, () => {
                     chrome.tabs.create({ url: 'https://www.mck.co.il' });
@@ -2632,12 +2457,17 @@ async function compareCarts() {
             });
 
             document.getElementById('switchToShufersal')?.addEventListener('click', () => {
-                const shufersalCart = finalCartToTransfer.filter(i => i.quantity > 0).map(i => {
-                    return {
-                        shufersalCode: i.shufersal_code,
-                        shufersal_code: i.shufersal_code,
-                        quantity: i.quantity
-                    };
+                const shufersalCart = [];
+                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
+                allSources.forEach(i => {
+                    const sCode = i.shufersal_code || i.code;
+                    if (sCode && i.quantity > 0) {
+                        shufersalCart.push({
+                            shufersalCode: sCode,
+                            shufersal_code: sCode,
+                            quantity: i.quantity
+                        });
+                    }
                 });
                 chrome.storage.local.set({ savedCartShufersal: shufersalCart }, () => {
                     chrome.tabs.create({ url: 'https://www.shufersal.co.il/online/he/cart' });
