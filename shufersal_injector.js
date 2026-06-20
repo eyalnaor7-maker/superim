@@ -78,7 +78,7 @@ function fetchFromMainWorld(url, options) {
 
 async function transferCartToShufersal(cartItems) {
     createShufersalStatusWindow();
-    updateShufersalStatus('מתחבר לשופרסל...');
+    updateShufersalStatus('מתחבר לשופרסל ומכין את העגלה...');
 
     let csrfToken = '';
     let tokenSource = '';
@@ -134,9 +134,9 @@ async function transferCartToShufersal(cartItems) {
     console.log("Shufersal Injector: Items to transfer:", cartItems);
 
     if (!csrfToken) {
-        updateShufersalStatus('⚠️ אזהרה: לא נמצא טוקן CSRF. מנסה בכל זאת...');
+        updateShufersalStatus('מתחבר לשופרסל ומכין את העגלה...');
     } else {
-        updateShufersalStatus(`🔑 טוקן CSRF נמצא מ-${tokenSource}: ${csrfToken.substring(0, 8)}... מכין ${cartItems.length} מוצרים...`);
+        updateShufersalStatus('מתחבר לשופרסל ומכין את העגלה...');
     }
 
     const headers = {
@@ -163,7 +163,7 @@ async function transferCartToShufersal(cartItems) {
         }
         const code = item.shufersal_code.startsWith('P_') ? item.shufersal_code : 'P_' + item.shufersal_code;
 
-        updateShufersalStatus(`שולח מוצר ${idx + 1}/${cartItems.length}: ${item.name || code}...`);
+        updateShufersalStatus(`מעביר מוצר ${idx + 1} מתוך ${cartItems.length}...`);
 
         let itemSuccess = false;
         let itemLog = `Product: ${item.name || code}\n`;
@@ -377,15 +377,12 @@ async function transferCartToShufersal(cartItems) {
                 window.location.reload();
             }, 2000);
         } else {
-            updateShufersalStatus(`🎉 סיום: ${successCount} מתוך ${cartItems.length} מוצרים הועברו בהצלחה.\n\nחלק מהמוצרים לא הועברו. אנא בדוק את לוג הדיאגנוסטיקה למטה ולחץ על כפתור הרענון לעדכון הסל.`);
+            updateShufersalStatus(`🎉 סיום: ${successCount} מתוך ${cartItems.length} מוצרים הועברו בהצלחה.\n\nחלק מהמוצרים לא הועברו. אנא לחץ על כפתור הרענון לעדכון הסל.`);
             const actionArea = document.getElementById('shufersal-action-area');
             if (actionArea) actionArea.style.display = 'block';
         }
     } else {
-        const statusReport = Object.entries(urlStatuses)
-            .map(([url, status]) => `- ${url}: ${status}`)
-            .join('\n');
-        updateShufersalStatus(`❌ שגיאה: לא הצלחנו להעביר אף מוצר.\n\nתוצאות נתיבים:\n${statusReport}\n\nאנא בדוק את הלוג למטה ושתף אותי בתוצאה.`);
+        updateShufersalStatus('❌ שגיאה: לא הצלחנו להעביר את המוצרים לעגלה. אנא נסה שוב.');
     }
 }
 
@@ -427,7 +424,6 @@ function updateShufersalStatus(text) {
 function addShufersalDebugLog(text) {
     const el = document.getElementById('shufersal-debug-log');
     if (el) {
-        el.style.display = 'block';
         el.innerText += text + '\n';
         el.scrollTop = el.scrollHeight;
     }
