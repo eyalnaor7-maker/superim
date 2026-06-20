@@ -393,20 +393,20 @@ function createShufersalStatusWindow() {
     const container = document.createElement('div');
     container.id = 'shufersal-compare-status';
     container.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px; width: 440px; max-height: 480px;
-        background: white; border: 3px solid #e8132b; border-radius: 15px;
+        position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 250px;
+        background: white; border: 3px solid #e8132b; border-radius: 12px;
         box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 999999;
-        padding: 20px; direction: rtl; font-family: Arial, sans-serif; text-align: right;
+        padding: 15px; direction: rtl; font-family: Arial, sans-serif; text-align: right;
         display: flex; flex-direction: column; overflow: hidden;
     `;
     container.innerHTML = `
-        <h3 style="margin:0 0 10px 0; color:#e8132b; text-align: center;">פרויקט סופרים - שופרסל</h3>
-        <div id="shufersal-status-content" style="flex: 1; overflow-y: auto; margin-bottom: 10px; min-height: 250px;">
+        <h3 style="margin:0 0 10px 0; color:#e8132b; text-align: center; font-size: 16px;">פרויקט סופרים - שופרסל</h3>
+        <div id="shufersal-status-content" style="flex: 1; overflow-y: auto; margin-bottom: 10px; min-height: 60px;">
             <p id="shufersal-status-text" style="margin:0; font-size:14px; font-weight:bold; white-space:pre-wrap; color:#333; line-height: 1.4;">מתחיל...</p>
             <div id="shufersal-debug-log" style="margin-top:10px; font-family: monospace; font-size:11px; background:#f4f4f4; padding:8px; border-radius:5px; border:1px solid #ccc; max-height:180px; overflow-y:auto; white-space:pre-wrap; display:none; direction: ltr; text-align: left;"></div>
         </div>
         <div id="shufersal-action-area" style="text-align: center; display:none;">
-            <button id="shufersal-refresh-btn" style="background:#e8132b; color:white; border:none; padding:10px 20px; font-size:14px; font-weight:bold; border-radius:8px; cursor:pointer; box-shadow:0 3px 6px rgba(0,0,0,0.2);">רענן עמוד לעדכון העגלה 🔄</button>
+            <button id="shufersal-refresh-btn" style="background:#e8132b; color:white; border:none; padding:8px 16px; font-size:13px; font-weight:bold; border-radius:6px; cursor:pointer; box-shadow:0 3px 6px rgba(0,0,0,0.2);">רענן עמוד לעדכון העגלה 🔄</button>
         </div>
     `;
     document.body.appendChild(container);
