@@ -24,7 +24,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["prices.json", "substitutes.json", "config.json"],
+      "resources": ["prices.json", "substitutes.json", "config.json", "settings.html", "settings.js", "branch_service.js"],
       "matches": ["<all_urls>"]
     }
   ],

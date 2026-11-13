@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+    <meta charset="UTF-8">
+    <title>הגדרות — יועץ קנייה חכם</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 40px;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-top: 0;
+            margin-bottom: 25px;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 15px;
+        }
+        .section {
+            background: #fafafa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .section-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #2980b9;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input[type="text"], input[type="password"], input[type="email"], select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 5px rgba(52, 152, 219, 0.3);
+        }
+        .btn-save {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-save:hover {
+            background-color: #219653;
+        }
+        #statusMessage {
+            margin-top: 15px;
+            text-align: center;
+            font-weight: bold;
+            padding: 10px;
+            border-radius: 6px;
+            display: none;
+        }
+        .status-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .help-text {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 4px;
+        }
+        .loading-spinner {
+            text-align: center;
+            color: #7f8c8d;
+            font-style: italic;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚙️ הגדרות — יועץ קנייה חכם</h1>
+        
+        <div id="loading" class="loading-spinner">
+            טוען סניפים מהרשתות, אנא המתן... ⏳
+        </div>
+
+        <div class="section" id="location-section" style="display: none;">
+            <div class="section-title">📍 הגדרת מיקום (סינון סניפים)</div>
+            <div class="form-group">
+                <label for="city-input">באיזו עיר אתה גר/קונה?</label>
+                <input type="text" id="city-input" placeholder="למשל: באר שבע, תל אביב, ירושלים..." autocomplete="off">
+                <div class="help-text">הזן עיר כדי לסנן את רשימת הסניפים למטה.</div>
+            </div>
+        </div>
+
+        <form id="settings-form" style="display: none;">
+            
+            <!-- Shufersal -->
+            <div class="section">
+                <div class="section-title">🏪 שופרסל</div>
+                <div class="form-group">
+                    <label for="shufersal-branch">סניף נבחר:</label>
+                    <select id="shufersal-branch" data-network="shufersal">
+                        <option value="">-- בחר סניף --</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Rami Levy -->
+            <div class="section">
+                <div class="section-title">🛒 רמי לוי</div>
+                <div class="form-group">
+                    <label for="rami-levy-branch">סניף נבחר:</label>
+                    <select id="rami-levy-branch" data-network="rami_levy">
+                        <option value="">-- בחר סניף --</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Victory -->
+            <div class="section">
+                <div class="section-title">🏬 ויקטורי</div>
+                <div class="form-group">
+                    <label for="victory-branch">סניף נבחר:</label>
+                    <select id="victory-branch" data-network="victory">
+                        <option value="">-- בחר סניף --</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- MCK -->
+            <div class="section">
+                <div class="section-title">📦 מחסני השוק</div>
+                <div class="form-group">
+                    <label for="mck-branch">סניף נבחר:</label>
+                    <select id="mck-branch" data-network="machsanei_hashuk">
+                        <option value="">-- בחר סניף --</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="button" class="btn-save" id="save-btn">💾 שמור הגדרות</button>
+            <div id="statusMessage"></div>
+        </form>
+    </div>
+
+    <script src="branch_service.js"></script>
+    <script src="settings.js"></script>
+</body>
+</html>

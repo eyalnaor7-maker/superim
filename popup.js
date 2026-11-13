@@ -56,17 +56,36 @@ async function findCandidatesFromDB(productName, targetStore) {
     };
 
     try {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/find_candidates`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                product_name: productName,
-                target_store: targetStore,
-                limit_val: 8
-            })
+        // Fallback since find_candidates RPC is missing.
+        // We take the longest meaningful words from the product name to build an 'ilike' query
+        const words = productName.split(/[\s\-\/,.'"%*]+/).filter(w => w.length > 2 && !STOP_WORDS.has(w));
+        if (words.length === 0) return [];
+        
+        // Take up to 2 significant words for the search to ensure we get some matches
+        const searchWords = words.slice(0, 2);
+        let ilikeConditions = searchWords.map(w => `name.ilike.%${w}%`).join(',');
+        
+        const targetStoreDbName = targetStore === 'ramiLevy' ? 'rami_levy' : (targetStore === 'machsaneiHashuk' ? 'machsanei_hashuk' : targetStore);
+
+        const params = new URLSearchParams({
+            select: 'barcode,name,store_products!inner(store_code,price)',
+            'store_products.store_name': `eq.${targetStoreDbName}`,
+            or: `(${ilikeConditions})`,
+            limit: 8
         });
+
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/products?${params}`, { headers });
+        
         if (!res.ok) throw new Error(`Candidates fetch failed: ${res.statusText}`);
-        return await res.json();
+        const data = await res.json();
+        
+        // Map to expected format
+        return data.map(p => ({
+            code: p.store_products && p.store_products[0] ? String(p.store_products[0].store_code) : p.barcode,
+            name: p.name,
+            price: p.store_products && p.store_products[0] ? parseFloat(p.store_products[0].price || 0) : 0
+        })).filter(c => c.price > 0);
+        
     } catch (e) {
         console.error("שגיאה בחיפוש תחליפים ב-Supabase:", e);
         return [];
@@ -121,6 +140,199 @@ try {
 
 
 
+// ===== AI SUBSTITUTE ENGINE HELPERS =====
+async function fetchSubstituteDetails(substituteBarcodes, headers) {
+    if (!substituteBarcodes || substituteBarcodes.length === 0) return;
+    
+    // De-duplicate and filter out barcodes already in pricesData
+    const missingBarcodes = substituteBarcodes.filter(b => {
+        const xmlKey = b.startsWith('P_') ? b : `P_${b}`;
+        const rawKey = b.replace('P_', '');
+        return !pricesData[xmlKey] && !pricesData[rawKey];
+    });
+    
+    if (missingBarcodes.length === 0) return;
+    
+    const queryParams = new URLSearchParams({
+        select: 'barcode,name,store_products(store_name,store_code,price)',
+        barcode: `in.(${missingBarcodes.join(',')})`
+    });
+    
+    try {
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers });
+        if (!response.ok) throw new Error(`Substitutes details query failed: ${response.statusText}`);
+        const products = await response.json();
+        
+        products.forEach(p => {
+            const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
+            const itemData = {
+                name: p.name,
+                shufersal_price: null,
+                rami_levy_price: null,
+                rami_levy_code: null,
+                victory_code: null,
+                victory_price: null,
+                substitutes: []
+            };
+            if (p.store_products) {
+                p.store_products.forEach(sp => {
+                    itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
+                    itemData[`${sp.store_name}_code`] = sp.store_code;
+                    if (sp.store_name === 'victory') {
+                        itemData.victory_retailer_id = sp.store_code;
+                    }
+                });
+            }
+            pricesData[xmlKey] = itemData;
+            pricesData[xmlKey.replace('P_', '')] = itemData;
+        });
+    } catch (err) {
+        console.error("שגיאה בטעינת פרטי תחליפים מ-Supabase:", err);
+    }
+}
+
+async function searchStoreForCandidates(productName, storeName, originalBarcode) {
+    let candidates = [];
+    
+    if (storeName === 'rami_levy' || storeName === 'ramiLevy') {
+        let storeId = '331';
+        try {
+            const rlStorage = localStorage.getItem('ramilevy') || sessionStorage.getItem('ramilevy');
+            if (rlStorage) {
+                const parsed = JSON.parse(rlStorage);
+                if (parsed.authuser?.user?.store_id) {
+                    storeId = String(parsed.authuser.user.store_id);
+                }
+            }
+        } catch(e) {}
+        try {
+            const resp = await fetch('https://www.rami-levy.co.il/api/catalog', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ q: productName, store: Number(storeId) })
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                candidates = (data.data || []).map(p => ({
+                    code: String(p.id),
+                    barcode: p.barcode ? String(p.barcode) : null,
+                    name: p.name,
+                    price: parseFloat(p.price?.price || 0),
+                    outOfStock: !((p.available_in || []).map(Number).includes(Number(storeId)))
+                })).filter(c => !c.outOfStock && c.price > 0 && c.code !== originalBarcode);
+            }
+        } catch(e) {
+            console.error("Rami Levy candidate search failed:", e);
+        }
+    }
+    
+    if (candidates.length === 0 && SUPABASE_ANON_KEY) {
+        try {
+            const dbCandidates = await findCandidatesFromDB(productName, storeName);
+            candidates = dbCandidates.map(c => ({
+                code: c.code,
+                name: c.name,
+                price: parseFloat(c.price || 0),
+                outOfStock: false
+            }));
+        } catch(e) {
+            console.error("Database candidate search failed:", e);
+        }
+    }
+    
+    return candidates;
+}
+
+async function askGeminiForSubstitute(originalName, candidates, storeName) {
+    if (!candidates || candidates.length === 0 || !GEMINI_API_KEY) return null;
+    
+    const candidatesText = candidates.map((c, i) => `${i+1}. ${c.name} (מחיר: ₪${c.price.toFixed(2)})`).join('\n');
+    
+    const prompt = `אתה עוזר לבחור מוצר חלופי בסופרמרקט עבור מוצר מקורי שחסר במלאי.
+מוצר מקורי: "${originalName}"
+רשימת מועמדים ברשת ${storeName}:
+${candidatesText}
+
+אנא בחר את המוצר שהוא החלופה הטובה ביותר. שים לב לפרמטרים הבאים:
+- סוג המוצר ושימוש (למשל: חלב, גבינה, לחם, יוגורט).
+- אחוז שומן (למשל: גבינה לבנה 5% צריכה להיות מוחלפת בגבינה לבנה 5% אחרת, לא 9%).
+- משקל/נפח אריזה (למשל: 250 גרם מול 500 גרם).
+- מותג ותכונות נוספות.
+
+ענה אך ורק במספר האינדקס של המוצר הנבחר (למשל: 1 או 2), או 0 אם אין אף מוצר מתאים ברשימה. אל תוסיף שום מילים נוספות.`;
+
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { temperature: 0.1, maxOutputTokens: 10 }
+            })
+        });
+        if (!response.ok) throw new Error(`Gemini request failed: ${response.statusText}`);
+        const resData = await response.json();
+        const text = resData.candidates[0].content.parts[0].text.trim();
+        const index = parseInt(text.match(/\d+/)?.[0] || 0);
+        if (index > 0 && index <= candidates.length) {
+            return candidates[index - 1];
+        }
+    } catch(e) {
+        console.error("Error calling Gemini API:", e);
+    }
+    return null;
+}
+
+async function saveSubstituteToSupabase(originalBarcode, substituteBarcode, headers) {
+    if (!SUPABASE_ANON_KEY || !originalBarcode || !substituteBarcode) return;
+    
+    const orig = originalBarcode.startsWith('P_') ? originalBarcode : `P_${originalBarcode}`;
+    const sub = substituteBarcode.startsWith('P_') ? substituteBarcode : `P_${substituteBarcode}`;
+    
+    const body = {
+        p_original_barcode: orig,
+        p_substitute_barcode_1: sub,
+        p_substitute_barcode_2: null
+    };
+    
+    try {
+        const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_substitute`, {
+            method: 'POST',
+            headers: {
+                ...headers,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+        if (resp.ok) {
+            console.log(`Saved substitute to Supabase: ${orig} -> ${sub}`);
+        } else {
+            console.warn(`Failed to save substitute: ${resp.statusText}`);
+        }
+    } catch(e) {
+        console.error("Error saving substitute to Supabase:", e);
+    }
+}
+
+function resolveStoreCodeToBarcode(storeCode, storeName) {
+    if (!storeCode) return null;
+    for (const [barcode, item] of Object.entries(pricesData)) {
+        if (storeName === 'rami_levy' || storeName === 'ramiLevy') {
+            if (String(item.rami_levy_code) === String(storeCode)) return barcode;
+        }
+        if (storeName === 'victory') {
+            if (String(item.victory_code) === String(storeCode) || String(item.victory_retailer_id) === String(storeCode)) return barcode;
+        }
+        if (storeName === 'shufersal') {
+            if (barcode === storeCode || barcode.replace('P_', '') === storeCode) return barcode;
+        }
+        if (storeName === 'machsaneiHashuk') {
+            if (String(item.machsanei_hashuk_code) === String(storeCode)) return barcode;
+        }
+    }
+    return null;
+}
+
 // ===== CHROME HELPERS =====
 function createHiddenTab(url) {
     return new Promise(resolve => chrome.tabs.create({ url, active: false }, resolve));
@@ -142,18 +354,40 @@ async function fetchInHiddenWindow(url, func, args = [], delay = 2500) {
     }
 }
 
-// ===== SETTINGS - store selection =====
+// ===== SETTINGS =====
 async function loadSettings() {
     return new Promise(resolve => {
-        chrome.storage.local.get(['settings'], result => {
-            resolve(result.settings || { shufersal: true, ramiLevy: true, victory: true, machsaneiHashuk: true });
+        chrome.storage.sync.get(['settings', 'userSettings'], result => {
+            // settings = store toggles (shufersal/ramiLevy/victory/machsaneiHashuk)
+            // userSettings = credentials + branchIds
+            resolve({
+                ...(result.settings || { shufersal: true, ramiLevy: true, victory: true, machsaneiHashuk: true }),
+                userSettings: result.userSettings || {}
+            });
         });
     });
 }
 
 async function saveSettings(settings) {
-    return new Promise(resolve => chrome.storage.local.set({ settings }, resolve));
+    return new Promise(resolve => chrome.storage.sync.set({ settings }, resolve));
 }
+
+// Save a branchId discovered from a store's website automatically
+async function saveBranchId(store, branchId) {
+    return new Promise(resolve => {
+        chrome.storage.sync.get(['userSettings'], result => {
+            const us = result.userSettings || {};
+            if (!us[store]) us[store] = {};
+            if (us[store].branchId !== String(branchId)) {
+                us[store].branchId = String(branchId);
+                chrome.storage.sync.set({ userSettings: us }, resolve);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
 
 // ===== SHUFERSAL CART SCANNER (runs in active tab) =====
 function scanShufersalCart() {
@@ -219,11 +453,13 @@ async function scanRamiLevyCart() {
             if (name.includes('משלוח') || name.toLowerCase().includes('delivery') || name.toLowerCase().includes('shipping')) return;
             const quantity = parseFloat(item.amount || 1);
             const price = parseFloat(item.price?.finalPrice || item.finalPrice || 0);
+            const isAvailable = item.isAvailable !== false;
             products.push({
                 code: String(item.id),
                 name: item.name,
                 quantity: quantity,
-                rami_levy_total: price * quantity
+                rami_levy_total: isAvailable ? price * quantity : 0,
+                outOfStock: !isAvailable
             });
         });
         return products;
@@ -236,6 +472,10 @@ async function scanRamiLevyCart() {
 // ===== VICTORY CART SCANNER =====
 async function scanVictoryCart() {
     try {
+        const settingsData = await loadSettings();
+        const userSettings = settingsData.userSettings || {};
+        const victorySettings = userSettings.victory || {};
+        
         const VICTORY_RETAILER_ID = 1470;
         const VICTORY_APP_ID = 4;
 
@@ -391,6 +631,13 @@ async function scanVictoryCart() {
             } catch(e) {}
         }
 
+        // Save newly discovered branchId, or fallback to saved one
+        if (branchId) {
+            saveBranchId('victory', branchId);
+        } else if (victorySettings.branchId) {
+            branchId = Number(victorySettings.branchId);
+        }
+
         if (!token) return [];
 
         const baseHeaders = {
@@ -482,6 +729,10 @@ async function scanVictoryCart() {
 // ===== MACHSANEI HASHUK CART SCANNER =====
 async function scanMCKCart() {
     try {
+        const settingsData = await loadSettings();
+        const userSettings = settingsData.userSettings || {};
+        const mckSettings = userSettings.machsaneiHashuk || {};
+
         const MCK_RETAILER_ID = 1107;
         const MCK_APP_ID = 4;
 
@@ -637,6 +888,13 @@ async function scanMCKCart() {
             } catch(e) {}
         }
 
+        // Save newly discovered branchId, or fallback to saved one
+        if (branchId) {
+            saveBranchId('machsaneiHashuk', branchId);
+        } else if (mckSettings.branchId) {
+            branchId = Number(mckSettings.branchId);
+        }
+
         if (!token) {
             console.warn('[MCK Scanner] No token found');
             return [];
@@ -775,13 +1033,13 @@ async function agentInsideCartEngine(itemsList) {
         if (item.id) itemsPayload[item.id] = parseFloat(item.quantity).toFixed(2);
     });
 
-    let storeId = '1', secretToken = '';
+    let storeId = 1, secretToken = '';
     try {
-        const rlStorage = localStorage.getItem('ramilevy');
+        const rlStorage = localStorage.getItem('ramilevy') || sessionStorage.getItem('ramilevy');
         if (rlStorage) {
             const parsed = JSON.parse(rlStorage);
             if (parsed.authuser?.user) {
-                storeId = String(parsed.authuser.user.store_id || 1);
+                storeId = Number(parsed.authuser.user.store_id || 1);
                 secretToken = parsed.authuser.user.token || '';
             }
         }
@@ -801,7 +1059,7 @@ async function agentInsideCartEngine(itemsList) {
             method: 'POST',
             headers,
             body: JSON.stringify({
-                store: storeId, isClub: 0,
+                store: Number(storeId), isClub: 0,
                 supplyAt: new Date().toISOString(),
                 items: itemsPayload,
                 meta: { uid: 0 }
@@ -809,14 +1067,32 @@ async function agentInsideCartEngine(itemsList) {
         });
         if (resp.ok) {
             const data = await resp.json();
-            return (data?.items || []).map(ci => ({
-                id: String(ci.id),
-                finalTotal: ci.FormatedTotalPrice,
-                quantity: ci.quantity
-            }));
+            const cartItemsMap = {};
+            (data?.items || []).forEach(ci => {
+                cartItemsMap[String(ci.id)] = ci;
+            });
+            return itemsList.map(item => {
+                const ci = cartItemsMap[item.id];
+                const isOutOfStock = !ci;
+                return {
+                    id: item.id,
+                    finalTotal: isOutOfStock ? 0 : (ci ? ci.FormatedTotalPrice : 0),
+                    quantity: ci ? ci.quantity : item.quantity,
+                    outOfStock: isOutOfStock
+                };
+            });
         }
-    } catch(e) {}
-    return [];
+    } catch(e) {
+        console.error("Cart API failed", e);
+    }
+
+    // Fallback if cart request failed: return all as out of stock
+    return itemsList.map(item => ({
+        id: item.id,
+        finalTotal: 0,
+        quantity: item.quantity,
+        outOfStock: true
+    }));
 }
 
 // ===== SHUFERSAL AGENT (runs inside hidden Shufersal window) =====
@@ -1611,6 +1887,23 @@ async function initSettings() {
     const activeStore = detectActiveStore(currentUrl);
     const settings = await loadSettings();
 
+    // Check if any branches are missing
+    const isMissingSettings = 
+        !settings.userSettings?.shufersal?.branchId || 
+        !settings.userSettings?.victory?.branchId || 
+        !settings.userSettings?.machsaneiHashuk?.branchId;
+        
+    if (isMissingSettings && !document.getElementById('missingSettingsWarn')) {
+        const warning = document.createElement('div');
+        warning.id = 'missingSettingsWarn';
+        warning.innerHTML = '⚠️ להשוואה מדויקת, <a href="#" style="color:#856404; text-decoration:underline;">הגדר את הסניפים שלך</a>';
+        warning.style = 'background: #fff3cd; color: #856404; padding: 10px; text-align: center; font-size: 13px; font-weight: bold; cursor: pointer; border-bottom: 1px solid #ffeeba;';
+        warning.onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+        const storePanel = document.getElementById('storePanel');
+        if (storePanel && storePanel.parentNode) {
+            storePanel.parentNode.insertBefore(warning, storePanel);
+        }
+    }
     const shufersalCheck = document.getElementById('toggleShufersal');
     const ramiCheck = document.getElementById('toggleRamiLevy');
     const victoryCheck = document.getElementById('toggleVictory');
@@ -1667,6 +1960,14 @@ async function initSettings() {
     document.getElementById('settingsBtn').addEventListener('click', () => {
         document.getElementById('storePanel').classList.toggle('open');
     });
+
+    // כפתור פתיחת דף הגדרות המשתמש
+    const userSettingsBtn = document.getElementById('userSettingsBtn');
+    if (userSettingsBtn) {
+        userSettingsBtn.addEventListener('click', () => {
+            chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+        });
+    }
 }
 
 // ===== MAIN COMPARISON FLOW =====
@@ -1743,6 +2044,7 @@ async function compareCarts() {
         // 2. Query Database / Load Local Fallback
         const codes = rawCartItems.map(item => item.code);
 
+        let headers = null;
         if (!SUPABASE_ANON_KEY) {
             statusDiv.innerHTML = '🔌 עובד במצב מקומי (קובץ מחירים)...';
             try {
@@ -1754,14 +2056,63 @@ async function compareCarts() {
         } else {
             statusDiv.innerHTML = 'טוען נתונים מ-Supabase...';
             pricesData = {};
-            const headers = {
+            headers = {
                 "apikey": SUPABASE_ANON_KEY,
                 "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
                 "Content-Type": "application/json"
             };
 
-            if (activeStore === 'shufersal' || activeStore === 'ramiLevy') {
-                const storeNameInDB = activeStore === 'shufersal' ? 'shufersal' : 'rami_levy';
+            if (activeStore === 'shufersal') {
+                // שופרסל: data-product-code מחזיר ברקוד אמיתי (P_xxx) ולא store_code פנימי
+                // לכן מחפשים לפי barcode ישירות בטבלת products
+                const barcodesList = [];
+                codes.forEach(c => {
+                    if (c.startsWith('P_')) {
+                        barcodesList.push(c);
+                        barcodesList.push(c.substring(2));
+                    } else {
+                        barcodesList.push(c);
+                        barcodesList.push('P_' + c);
+                    }
+                });
+                const queryParams = new URLSearchParams({
+                    select: 'barcode,name,store_products(store_name,store_code,price),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2)',
+                    barcode: `in.(${barcodesList.join(',')})`
+                });
+                try {
+                    const products = await fetch(`${SUPABASE_URL}/rest/v1/products?${queryParams}`, { headers }).then(r => r.ok ? r.json() : []);
+
+                    products.forEach(p => {
+                        const xmlKey = p.barcode.startsWith('P_') ? p.barcode : `P_${p.barcode}`;
+                        const rawKey = xmlKey.replace('P_', '');
+                        const itemData = {
+                            name: p.name,
+                            shufersal_price: null,
+                            rami_levy_price: null,
+                            rami_levy_code: null,
+                            victory_code: null,
+                            victory_price: null,
+                            machsanei_hashuk_price: null,
+                            machsanei_hashuk_code: null,
+                            substitutes: p.substitutes ? (Array.isArray(p.substitutes) ? p.substitutes.flatMap(s => [s.substitute_barcode_1, s.substitute_barcode_2]).filter(Boolean) : [p.substitutes.substitute_barcode_1, p.substitutes.substitute_barcode_2].filter(Boolean)) : []
+                        };
+                        if (p.store_products) {
+                            p.store_products.forEach(sp => {
+                                itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
+                                itemData[`${sp.store_name}_code`] = sp.store_code;
+                                if (sp.store_name === 'victory') {
+                                    itemData.victory_retailer_id = sp.store_code;
+                                }
+                            });
+                        }
+                        // שמור לפי שתי הגרסאות של המפתח כדי שהחיפוש יצליח
+                        pricesData[xmlKey] = itemData;
+                        pricesData[rawKey] = itemData;
+                    });
+                } catch (err) {
+                    console.error("שגיאה בפנייה ל-Supabase (shufersal):", err);
+                }
+            } else if (activeStore === 'ramiLevy') {
                 const dbQueryCodes = [];
                 codes.forEach(c => {
                     dbQueryCodes.push(c);
@@ -1772,8 +2123,8 @@ async function compareCarts() {
                     }
                 });
                 const queryParams = new URLSearchParams({
-                    select: 'store_code,products(barcode,name,store_products(store_name,store_code,price))',
-                    store_name: `eq.${storeNameInDB}`,
+                    select: 'store_code,products(barcode,name,store_products(store_name,store_code,price),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2))',
+                    store_name: 'eq.rami_levy',
                     store_code: `in.(${dbQueryCodes.join(',')})`
                 });
                 try {
@@ -1792,7 +2143,9 @@ async function compareCarts() {
                             rami_levy_code: null,
                             victory_code: null,
                             victory_price: null,
-                            substitutes: []
+                            machsanei_hashuk_price: null,
+                            machsanei_hashuk_code: null,
+                            substitutes: p.substitutes ? (Array.isArray(p.substitutes) ? p.substitutes.flatMap(s => [s.substitute_barcode_1, s.substitute_barcode_2]).filter(Boolean) : [p.substitutes.substitute_barcode_1, p.substitutes.substitute_barcode_2].filter(Boolean)) : []
                         };
                         if (p.store_products) {
                             p.store_products.forEach(innerSp => {
@@ -1803,25 +2156,16 @@ async function compareCarts() {
                                 }
                             });
                         }
-                        const key = (activeStore === 'shufersal' && sp.store_code) ? sp.store_code : xmlKey;
-                        pricesData[key] = itemData;
-                        if (activeStore === 'shufersal' && sp.store_code) {
-                            if (sp.store_code.startsWith('P_')) {
-                                pricesData[sp.store_code.substring(2)] = itemData;
-                            } else {
-                                pricesData['P_' + sp.store_code] = itemData;
-                            }
-                        } else {
-                            pricesData[xmlKey.replace('P_', '')] = itemData;
-                        }
+                        pricesData[xmlKey] = itemData;
+                        pricesData[xmlKey.replace('P_', '')] = itemData;
                     });
                 } catch (err) {
-                    console.error("שגיאה בפנייה ל-Supabase:", err);
+                    console.error("שגיאה בפנייה ל-Supabase (ramiLevy):", err);
                 }
             } else if (activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
                 const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
                 const queryParams = new URLSearchParams({
-                    select: 'barcode,name,store_products(store_name,store_code,price)',
+                    select: 'barcode,name,store_products(store_name,store_code,price),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2)',
                     barcode: `in.(${barcodesList.join(',')})`
                 });
                 try {
@@ -1836,7 +2180,7 @@ async function compareCarts() {
                             rami_levy_code: null,
                             victory_code: null,
                             victory_price: null,
-                            substitutes: []
+                            substitutes: p.substitutes ? (Array.isArray(p.substitutes) ? p.substitutes.flatMap(s => [s.substitute_barcode_1, s.substitute_barcode_2]).filter(Boolean) : [p.substitutes.substitute_barcode_1, p.substitutes.substitute_barcode_2].filter(Boolean)) : []
                         };
                         if (p.store_products) {
                             p.store_products.forEach(sp => {
@@ -1853,6 +2197,21 @@ async function compareCarts() {
                     console.error("שגיאה בפנייה ל-Supabase:", err);
                 }
             }
+        }
+
+        const substituteBarcodes = [];
+        Object.values(pricesData).forEach(item => {
+            if (item.substitutes) {
+                item.substitutes.forEach(b => {
+                    substituteBarcodes.push(b.startsWith('P_') ? b : `P_${b}`);
+                    substituteBarcodes.push(b.replace('P_', ''));
+                });
+            }
+        });
+        if (SUPABASE_ANON_KEY && substituteBarcodes.length > 0) {
+            statusDiv.innerHTML = 'טוען פרטי מוצרים תחליפיים...';
+            const uniqueSubs = Array.from(new Set(substituteBarcodes));
+            await fetchSubstituteDetails(uniqueSubs, headers);
         }
 
         // 3. Map products
@@ -1906,7 +2265,8 @@ async function compareCarts() {
                     mck_price_unit: dbItem.machsanei_hashuk_price != null ? dbItem.machsanei_hashuk_price : null,
                     rl_live_total: rl_live_total,
                     v_live_total: v_live_total,
-                    mck_live_total: mck_live_total
+                    mck_live_total: mck_live_total,
+                    substitutes: dbItem.substitutes || []
                 });
 
                 if (activeStore !== 'shufersal') {
@@ -1915,10 +2275,31 @@ async function compareCarts() {
                         name: item.name,
                         quantity: item.quantity
                     });
+                    if (dbItem.substitutes) {
+                        dbItem.substitutes.forEach(subBarcode => {
+                            itemsForShufersal.push({
+                                barcode: subBarcode.replace('P_', ''),
+                                name: `[תחליף] ${item.name}`,
+                                quantity: item.quantity
+                            });
+                        });
+                    }
                 }
 
                 if (activeStore !== 'ramiLevy' && dbItem.rami_levy_code) {
-                    itemsForRamiLevy.push({ id: String(dbItem.rami_levy_code), quantity: item.quantity });
+                    itemsForRamiLevy.push({ id: String(dbItem.rami_levy_code), barcode: cleanBarcode, quantity: item.quantity });
+                    if (dbItem.substitutes) {
+                        dbItem.substitutes.forEach(subBarcode => {
+                            const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
+                            if (subItem && subItem.rami_levy_code) {
+                                itemsForRamiLevy.push({
+                                    id: String(subItem.rami_levy_code),
+                                    barcode: subBarcode.replace('P_', ''),
+                                    quantity: item.quantity
+                                });
+                            }
+                        });
+                    }
                 }
 
                 if (activeStore !== 'victory') {
@@ -1928,6 +2309,19 @@ async function compareCarts() {
                         quantity: item.quantity,
                         retailerProductId: dbItem.victory_retailer_id || null
                     });
+                    if (dbItem.substitutes) {
+                        dbItem.substitutes.forEach(subBarcode => {
+                            const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
+                            if (subItem) {
+                                itemsForVictory.push({
+                                    barcode: subBarcode.replace('P_', ''),
+                                    name: `[תחליף] ${subItem.name}`,
+                                    quantity: item.quantity,
+                                    retailerProductId: subItem.victory_retailer_id || null
+                                });
+                            }
+                        });
+                    }
                 }
 
                 if (activeStore !== 'machsaneiHashuk') {
@@ -1937,6 +2331,19 @@ async function compareCarts() {
                         quantity: item.quantity,
                         retailerProductId: null
                     });
+                    if (dbItem.substitutes) {
+                        dbItem.substitutes.forEach(subBarcode => {
+                            const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
+                            if (subItem) {
+                                itemsForMCK.push({
+                                    barcode: subBarcode.replace('P_', ''),
+                                    name: `[תחליף] ${subItem.name}`,
+                                    quantity: item.quantity,
+                                    retailerProductId: null
+                                });
+                            }
+                        });
+                    }
                 }
             } else {
                 missingItems.push(item);
@@ -2001,62 +2408,181 @@ async function compareCarts() {
         const outOfStockItems = [];
         const itemsToDeleteCodes = new Set();
 
-        matchedItems.forEach(item => {
-            // Shufersal
+        for (const item of matchedItems) {
             const barcode = item.shufersal_code.replace('P_', '');
+            
+            // Shufersal
+            let chosenShufersalBarcode = barcode;
             let shufersalTotal = null;
             let shufersalSource = 'database';
+            let shufersalSubName = null;
             if (activeStore === 'shufersal') {
                 shufersalTotal = item.shufersal_total;
                 shufersalSource = 'live';
             } else if (compareShufersal) {
-                const shufersalLive = shufersalResults.find(r => r.barcode === barcode);
+                let shufersalLive = shufersalResults.find(r => r.barcode === barcode);
                 if (shufersalLive && !shufersalLive.outOfStock) {
                     shufersalTotal = shufersalLive.finalTotal;
                     shufersalSource = 'live';
-                } else if (item.shufersal_price_unit != null) {
-                    shufersalTotal = item.shufersal_price_unit * item.quantity;
-                    shufersalSource = 'database';
+                } else {
+                    let foundSub = false;
+                    if (item.substitutes && item.substitutes.length > 0) {
+                        for (const subBarcode of item.substitutes) {
+                            const cleanSub = subBarcode.replace('P_', '');
+                            const subLive = shufersalResults.find(r => r.barcode === cleanSub);
+                            if (subLive && !subLive.outOfStock) {
+                                shufersalTotal = subLive.finalTotal;
+                                shufersalSource = 'live-substitute';
+                                chosenShufersalBarcode = cleanSub;
+                                foundSub = true;
+                                const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
+                                if (subItem) {
+                                    shufersalSubName = subItem.name;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    if (!foundSub && shufersalLive && shufersalLive.outOfStock && GEMINI_API_KEY) {
+                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} בשופרסל...`;
+                        const candidates = await searchStoreForCandidates(item.name, 'shufersal', barcode);
+                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'שופרסל');
+                        if (chosen) {
+                            shufersalTotal = chosen.price * item.quantity;
+                            shufersalSource = 'ai-substitute';
+                            chosenShufersalBarcode = chosen.code;
+                            shufersalSubName = chosen.name;
+                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'shufersal') || chosen.code;
+                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
+                        }
+                    }
+                    if (!shufersalTotal) {
+                        if (shufersalLive && shufersalLive.outOfStock) {
+                            shufersalTotal = null;
+                        } else if (item.shufersal_price_unit != null) {
+                            shufersalTotal = item.shufersal_price_unit * item.quantity;
+                            shufersalSource = 'database';
+                        }
+                    }
                 }
             }
 
             // Rami Levy
+            let chosenRamiCode = item.backup_target_code;
             let ramiTotal = null;
             let ramiSource = 'database';
+            let ramiSubName = null;
             if (activeStore === 'ramiLevy') {
                 ramiTotal = item.rl_live_total;
                 ramiSource = 'live';
             } else if (compareRamiLevy) {
-                const liveData = ramiLevyResults.find(r => r.id === item.backup_target_code);
-                if (liveData && !liveData.outOfStock) {
-                    ramiTotal = liveData.finalTotal;
+                let ramiLive = ramiLevyResults.find(r => r.id === item.backup_target_code);
+                if (ramiLive && !ramiLive.outOfStock) {
+                    ramiTotal = ramiLive.finalTotal;
                     ramiSource = 'live';
-                } else if (item.rami_levy_price_unit != null) {
-                    ramiTotal = item.rami_levy_price_unit * item.quantity;
-                    ramiSource = 'database';
+                } else {
+                    let foundSub = false;
+                    if (item.substitutes && item.substitutes.length > 0) {
+                        for (const subBarcode of item.substitutes) {
+                            const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
+                            if (subItem && subItem.rami_levy_code) {
+                                const subLive = ramiLevyResults.find(r => r.id === String(subItem.rami_levy_code));
+                                if (subLive && !subLive.outOfStock) {
+                                    ramiTotal = subLive.finalTotal;
+                                    ramiSource = 'live-substitute';
+                                    chosenRamiCode = String(subItem.rami_levy_code);
+                                    foundSub = true;
+                                    ramiSubName = subItem.name;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!foundSub && ramiLive && ramiLive.outOfStock && GEMINI_API_KEY) {
+                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} ברמי לוי...`;
+                        const candidates = await searchStoreForCandidates(item.name, 'rami_levy', item.backup_target_code);
+                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'רמי לוי');
+                        if (chosen) {
+                            ramiTotal = chosen.price * item.quantity;
+                            ramiSource = 'ai-substitute';
+                            chosenRamiCode = chosen.code;
+                            ramiSubName = chosen.name;
+                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'rami_levy') || chosen.code;
+                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
+                        }
+                    }
+                    if (!ramiTotal) {
+                        if (ramiLive && ramiLive.outOfStock) {
+                            ramiTotal = null;
+                        } else if (item.rami_levy_price_unit != null) {
+                            ramiTotal = item.rami_levy_price_unit * item.quantity;
+                            ramiSource = 'database';
+                        }
+                    }
                 }
             }
 
             // Victory
+            let chosenVictoryCode = item.victory_code || item.victory_retailer_id;
             let victoryTotal = null;
             let victorySource = 'database';
+            let victorySubName = null;
             if (activeStore === 'victory') {
                 victoryTotal = item.v_live_total;
                 victorySource = 'live';
             } else if (compareVictory) {
-                const victoryLive = victoryResults.find(r => r.barcode === barcode);
+                let victoryLive = victoryResults.find(r => r.barcode === barcode);
                 if (victoryLive && !victoryLive.outOfStock) {
                     victoryTotal = victoryLive.finalTotal;
                     victorySource = 'live';
-                } else if (item.victory_price_unit != null) {
-                    victoryTotal = item.victory_price_unit * item.quantity;
-                    victorySource = 'database';
+                } else {
+                    let foundSub = false;
+                    if (item.substitutes && item.substitutes.length > 0) {
+                        for (const subBarcode of item.substitutes) {
+                            const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
+                            if (subItem && (subItem.victory_code || subItem.victory_retailer_id)) {
+                                const cleanSub = subBarcode.replace('P_', '');
+                                const subLive = victoryResults.find(r => r.barcode === cleanSub);
+                                if (subLive && !subLive.outOfStock) {
+                                    victoryTotal = subLive.finalTotal;
+                                    victorySource = 'live-substitute';
+                                    chosenVictoryCode = subItem.victory_code || subItem.victory_retailer_id;
+                                    foundSub = true;
+                                    victorySubName = subItem.name;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!foundSub && victoryLive && victoryLive.outOfStock && GEMINI_API_KEY) {
+                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} בויקטורי...`;
+                        const candidates = await searchStoreForCandidates(item.name, 'victory', chosenVictoryCode);
+                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'ויקטורי');
+                        if (chosen) {
+                            victoryTotal = chosen.price * item.quantity;
+                            victorySource = 'ai-substitute';
+                            chosenVictoryCode = chosen.code;
+                            victorySubName = chosen.name;
+                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'victory') || chosen.code;
+                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
+                        }
+                    }
+                    if (!victoryTotal) {
+                        if (victoryLive && victoryLive.outOfStock) {
+                            victoryTotal = null;
+                        } else if (item.victory_price_unit != null) {
+                            victoryTotal = item.victory_price_unit * item.quantity;
+                            victorySource = 'database';
+                        }
+                    }
                 }
             }
 
             // Machsanei HaShuk
+            let chosenMCKCode = item.mck_code || item.mck_retailer_id;
             let mckTotal = null;
             let mckSource = 'database';
+            let mckSubName = null;
             let mckLive = null;
             if (activeStore === 'machsaneiHashuk') {
                 mckTotal = item.mck_live_total;
@@ -2066,9 +2592,46 @@ async function compareCarts() {
                 if (mckLive && !mckLive.outOfStock) {
                     mckTotal = mckLive.finalTotal;
                     mckSource = 'live';
-                } else if (item.mck_price_unit != null) {
-                    mckTotal = item.mck_price_unit * item.quantity;
-                    mckSource = 'database';
+                } else {
+                    let foundSub = false;
+                    if (item.substitutes && item.substitutes.length > 0) {
+                        for (const subBarcode of item.substitutes) {
+                            const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
+                            if (subItem) {
+                                const cleanSub = subBarcode.replace('P_', '');
+                                const subLive = mckResults.find(r => r.barcode === cleanSub);
+                                if (subLive && !subLive.outOfStock) {
+                                    mckTotal = subLive.finalTotal;
+                                    mckSource = 'live-substitute';
+                                    chosenMCKCode = subLive.retailerProductId || null;
+                                    foundSub = true;
+                                    mckSubName = subItem.name;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!foundSub && mckLive && mckLive.outOfStock && GEMINI_API_KEY) {
+                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} במחסני השוק...`;
+                        const candidates = await searchStoreForCandidates(item.name, 'machsaneiHashuk', chosenMCKCode);
+                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'מחסני השוק');
+                        if (chosen) {
+                            mckTotal = chosen.price * item.quantity;
+                            mckSource = 'ai-substitute';
+                            chosenMCKCode = chosen.code;
+                            mckSubName = chosen.name;
+                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'machsaneiHashuk') || chosen.code;
+                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
+                        }
+                    }
+                    if (!mckTotal) {
+                        if (mckLive && mckLive.outOfStock) {
+                            mckTotal = null;
+                        } else if (item.mck_price_unit != null) {
+                            mckTotal = item.mck_price_unit * item.quantity;
+                            mckSource = 'database';
+                        }
+                    }
                 }
             }
 
@@ -2080,12 +2643,12 @@ async function compareCarts() {
             const obj = {
                 name: item.name,
                 quantity: item.quantity,
-                shufersal_code: item.shufersal_code,
-                targetCode: item.backup_target_code,
-                victory_code: item.victory_code || item.victory_retailer_id,
-                victory_retailer_id: item.victory_retailer_id || item.victory_code,
-                mck_code: mckLive?.retailerProductId || null,
-                mck_retailer_id: mckLive?.retailerProductId || null,
+                shufersal_code: chosenShufersalBarcode.startsWith('P_') ? chosenShufersalBarcode : `P_${chosenShufersalBarcode}`,
+                targetCode: chosenRamiCode,
+                victory_code: chosenVictoryCode,
+                victory_retailer_id: chosenVictoryCode,
+                mck_code: chosenMCKCode,
+                mck_retailer_id: chosenMCKCode,
                 shufersal_total: compareShufersal ? shufersalTotal : null,
                 rami_levy_total: compareRamiLevy ? ramiTotal : null,
                 victory_total: compareVictory ? victoryTotal : null,
@@ -2097,7 +2660,11 @@ async function compareCarts() {
                 shufersal_price_source: shufersalSource,
                 rami_price_source: ramiSource,
                 victory_price_source: victorySource,
-                mck_price_source: mckSource
+                mck_price_source: mckSource,
+                shufersal_sub_name: shufersalSubName,
+                rami_sub_name: ramiSubName,
+                victory_sub_name: victorySubName,
+                mck_sub_name: mckSubName
             };
 
             const isMissingEverywhere = (!compareShufersal || isShufersalMissing) &&
@@ -2110,10 +2677,7 @@ async function compareCarts() {
             } else {
                 inStockItems.push(obj);
             }
-            if (isRamiMissing && obj.targetCode) {
-                itemsToDeleteCodes.add(obj.targetCode);
-            }
-        });
+        }
 
         statusDiv.innerHTML = 'מנתח נתוני עגלה...';
 
@@ -2193,6 +2757,15 @@ async function compareCarts() {
             outOfStockItems.forEach(processItemForTotals);
             missingItems.forEach(processItemForTotals);
 
+            const shufersalBranchName = settings.userSettings?.shufersal?.branchName || '';
+            const shufersalDisplayName = shufersalBranchName ? `שופרסל (${shufersalBranchName})` : 'שופרסל';
+            const ramiBranchName = settings.userSettings?.ramiLevy?.branchName || '';
+            const ramiDisplayName = ramiBranchName ? `רמי לוי (${ramiBranchName})` : 'רמי לוי';
+            const victoryBranchName = settings.userSettings?.victory?.branchName || '';
+            const victoryDisplayName = victoryBranchName ? `ויקטורי (${victoryBranchName})` : 'ויקטורי';
+            const mckBranchName = settings.userSettings?.machsaneiHashuk?.branchName || '';
+            const mckDisplayName = mckBranchName ? `מחסני השוק (${mckBranchName})` : 'מחסני השוק';
+
             const storesWithData = [];
             if (activeStore === 'shufersal' || compareShufersal) {
                 const isShufersalActive = activeStore === 'shufersal';
@@ -2201,7 +2774,7 @@ async function compareCarts() {
                     ? 'הסופר הנוכחי שלך' 
                     : (shufersalCount === rawCartItems.length ? shufersalComment : `${shufersalComment} (${shufersalCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
-                    key: 'shufersal', name: 'שופרסל', total: totalShufersal,
+                    key: 'shufersal', name: shufersalDisplayName, total: totalShufersal,
                     info: shufersalInfo, hasData: isShufersalActive ? true : (shufersalCount > 0)
                 });
             }
@@ -2213,7 +2786,7 @@ async function compareCarts() {
                     ? 'הסופר הנוכחי שלך' 
                     : (ramiCount === rawCartItems.length ? ramiComment : `${ramiComment} (${ramiCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
-                    key: 'ramiLevy', name: 'רמי לוי', total: totalRamiLevy,
+                    key: 'ramiLevy', name: ramiDisplayName, total: totalRamiLevy,
                     info: ramiInfo,
                     hasData: isRamiActive ? true : (ramiCount > 0)
                 });
@@ -2226,7 +2799,7 @@ async function compareCarts() {
                     ? 'הסופר הנוכחי שלך' 
                     : (victoryCount === rawCartItems.length ? victoryComment : `${victoryComment} (${victoryCount}/${rawCartItems.length} מוצרים)`);
                 storesWithData.push({
-                    key: 'victory', name: 'ויקטורי', total: totalVictory,
+                    key: 'victory', name: victoryDisplayName, total: totalVictory,
                     info: victoryInfo,
                     hasData: isVictoryActive ? true : (victoryCount > 0),
                     debugInfo: isVictoryActive ? null : (victoryResults.length === 0 ? (agentDebug?.noToken ? 'לא מחובר לויקטורי' : (agentDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף')) : null)
@@ -2311,17 +2884,34 @@ async function compareCarts() {
                 </div>`;
             });
 
+            // Split inStockItems into available (no replacements) and replaced (replacements in at least one store)
+            const availableItems = [];
+            const replacedItems = [];
+            inStockItems.forEach(item => {
+                const isReplacedInAny = 
+                    ((activeStore === 'shufersal' || compareShufersal) && (item.shufersal_price_source === 'live-substitute' || item.shufersal_price_source === 'ai-substitute')) ||
+                    (compareRamiLevy && (item.rami_price_source === 'live-substitute' || item.rami_price_source === 'ai-substitute')) ||
+                    (compareVictory && (item.victory_price_source === 'live-substitute' || item.victory_price_source === 'ai-substitute')) ||
+                    (compareMCK && (item.mck_price_source === 'live-substitute' || item.mck_price_source === 'ai-substitute'));
+                
+                if (isReplacedInAny) {
+                    replacedItems.push(item);
+                } else {
+                    availableItems.push(item);
+                }
+            });
+
             html += `
             <div class="details-section">
                 <button class="details-toggle" id="detailsToggle">
-                    <span>פירוט מוצרים (${inStockItems.length} זמינים)</span>
+                    <span>פירוט מוצרים (${availableItems.length} זמינים, ${replacedItems.length} הוחלפו)</span>
                     <span class="toggle-arrow" id="toggleArrow">▼</span>
                 </button>
                 <div class="details-content" id="detailsContent">`;
 
-            if (inStockItems.length > 0) {
+            if (availableItems.length > 0) {
                 html += '<div class="section-label">מוצרים זמינים</div><div class="product-list">';
-                inStockItems.forEach(item => {
+                availableItems.forEach(item => {
                     const sText = (activeStore === 'shufersal' || compareShufersal) ? `<span class="p-shufersal">${(item.shufersal_total && item.shufersal_total > 0) ? formatPrice(item.shufersal_total) : '-'}</span>` : '';
                     const rText = (compareRamiLevy) ? `<span class="p-rami">${(item.rami_levy_total && item.rami_levy_total > 0) ? formatPrice(item.rami_levy_total) : '-'}</span>` : '';
                     const vText = (compareVictory) ? `<span class="p-victory">${(item.victory_total && item.victory_total > 0) ? formatPrice(item.victory_total) : '-'}</span>` : '';
@@ -2333,6 +2923,58 @@ async function compareCarts() {
                             ${sText}
                             ${rText}${vText}${mText}
                         </div>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+
+            if (replacedItems.length > 0) {
+                html += '<div class="section-label">מוצרים שהוחלפו</div><div class="product-list">';
+                replacedItems.forEach(item => {
+                    const sIsSub = (item.shufersal_price_source === 'live-substitute' || item.shufersal_price_source === 'ai-substitute');
+                    const sSubBadge = sIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const sText = (activeStore === 'shufersal' || compareShufersal) ? `<span class="p-shufersal">${(item.shufersal_total && item.shufersal_total > 0) ? formatPrice(item.shufersal_total) + sSubBadge : '-'}</span>` : '';
+                    
+                    const rIsSub = (item.rami_price_source === 'live-substitute' || item.rami_price_source === 'ai-substitute');
+                    const rSubBadge = rIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const rText = (compareRamiLevy) ? `<span class="p-rami">${(item.rami_levy_total && item.rami_levy_total > 0) ? formatPrice(item.rami_levy_total) + rSubBadge : '-'}</span>` : '';
+                    
+                    const vIsSub = (item.victory_price_source === 'live-substitute' || item.victory_price_source === 'ai-substitute');
+                    const vSubBadge = vIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const vText = (compareVictory) ? `<span class="p-victory">${(item.victory_total && item.victory_total > 0) ? formatPrice(item.victory_total) + vSubBadge : '-'}</span>` : '';
+                    
+                    const mIsSub = (item.mck_price_source === 'live-substitute' || item.mck_price_source === 'ai-substitute');
+                    const mSubBadge = mIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const mText = (compareMCK) ? `<span class="p-mck">${(item.mck_total && item.mck_total > 0) ? formatPrice(item.mck_total) + mSubBadge : '-'}</span>` : '';
+                    
+                    const replacementsDetail = [];
+                    if (sIsSub && item.shufersal_sub_name) {
+                        replacementsDetail.push(`שופרסל: הוחלף ב-${item.shufersal_sub_name}`);
+                    }
+                    if (rIsSub && item.rami_sub_name) {
+                        replacementsDetail.push(`רמי לוי: הוחלף ב-${item.rami_sub_name}`);
+                    }
+                    if (vIsSub && item.victory_sub_name) {
+                        replacementsDetail.push(`ויקטורי: הוחלף ב-${item.victory_sub_name}`);
+                    }
+                    if (mIsSub && item.mck_sub_name) {
+                        replacementsDetail.push(`מחסני השוק: הוחלף ב-${item.mck_sub_name}`);
+                    }
+                    
+                    const detailHtml = replacementsDetail.length > 0 
+                        ? `<div class="product-sub-info" style="font-size: 11px; color: #f59e0b; padding-top: 4px; line-height: 1.4;">${replacementsDetail.join(' | ')}</div>` 
+                        : '';
+
+                    html += `
+                    <div class="product-item" style="flex-direction: column; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #f3f4f6;">
+                        <div style="display: flex; justify-content: space-between; width: 100%;">
+                            <span class="product-name" style="font-weight: 500;">${item.name} x${item.quantity}</span>
+                            <div class="product-prices">
+                                ${sText}
+                                ${rText}${vText}${mText}
+                            </div>
+                        </div>
+                        ${detailHtml}
                     </div>`;
                 });
                 html += '</div>';
