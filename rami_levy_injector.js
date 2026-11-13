@@ -15,7 +15,7 @@ async function transferCartInstantly(cartItems) {
     let storeId = "1";
     let userId = 0;
 
-    let ramiLevyStorage = localStorage.getItem('ramilevy');
+    let ramiLevyStorage = localStorage.getItem('ramilevy') || sessionStorage.getItem('ramilevy');
     if (ramiLevyStorage) {
         try {
             let parsedData = JSON.parse(ramiLevyStorage);
@@ -40,10 +40,44 @@ async function transferCartInstantly(cartItems) {
         requestHeaders["authorization"] = "Bearer " + secretToken;
     }
 
+    // Fetch current cart items to delete anything not in our savedCart
+    let currentCartIds = new Set();
+    try {
+        console.log("Rami Levy Injector: Fetching current cart via GET...");
+        const getCartResponse = await fetch("https://www.rami-levy.co.il/api/v2/cart", {
+            method: "GET",
+            headers: {
+                "accept": "application/json, text/plain, */*",
+                "locale": "he",
+                "ecomtoken": secretToken || "",
+                "authorization": secretToken ? "Bearer " + secretToken : ""
+            },
+            credentials: "include"
+        });
+        console.log("Rami Levy Injector: GET cart response status:", getCartResponse.status);
+        if (getCartResponse.ok) {
+            const cartData = await getCartResponse.json();
+            console.log("Rami Levy Injector: Cart data received:", cartData);
+            if (cartData && cartData.items) {
+                cartData.items.forEach(ci => {
+                    if (ci && ci.id) {
+                        currentCartIds.add(String(ci.id));
+                    }
+                });
+            }
+        } else {
+            console.warn("Rami Levy Injector: GET cart request failed with status", getCartResponse.status);
+        }
+    } catch (error) {
+        console.error("Failed to fetch current cart for deletion:", error);
+    }
+
     let itemsPayload = {};
+    const activeCodes = new Set();
     for (let i = 0; i < cartItems.length; i++) {
-        let finalId = cartItems[i].targetCode;
+        let finalId = String(cartItems[i].targetCode);
         let qty = cartItems[i].quantity !== undefined ? cartItems[i].quantity : 1;
+        activeCodes.add(finalId);
 
         // התיקון הקריטי: אם הכמות היא 0 (מחיקה), שולחים מספר 0 ולא "0.00"
         if (qty === 0) {
@@ -53,8 +87,20 @@ async function transferCartInstantly(cartItems) {
         }
     }
 
+    // Delete any items currently in the cart that are not in our savedCart
+    currentCartIds.forEach(id => {
+        if (!activeCodes.has(id)) {
+            itemsPayload[id] = 0;
+        }
+    });
+
+    console.log("Rami Levy Injector: Desired cart items:", cartItems);
+    console.log("Rami Levy Injector: Active codes:", Array.from(activeCodes));
+    console.log("Rami Levy Injector: Current cart IDs from server:", Array.from(currentCartIds));
+    console.log("Rami Levy Injector: Final items payload to send:", itemsPayload);
+
     let requestBody = {
-        store: storeId,
+        store: Number(storeId),
         isClub: 0,
         supplyAt: new Date().toISOString(),
         items: itemsPayload,
