@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress } = require('../victory_match.js');
+const { normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress, branchFromDeliverySlots } = require('../victory_match.js');
+
+test('branchFromDeliverySlots reads the delivering branch, null when there is no delivery', () => {
+  const answer = { status: 'success', data: { '2026-11-15': [{ id: '5067', hours: '10:00-12:00', branchId: '26' }] } };
+  assert.strictEqual(branchFromDeliverySlots(answer), '26');
+  assert.strictEqual(branchFromDeliverySlots({ status: 'success', data: [] }), null);
+  assert.strictEqual(branchFromDeliverySlots({ status: 'error' }), null);
+  assert.strictEqual(branchFromDeliverySlots(null), null);
+});
 
 test('normalizeBarcode strips P_ and leading zeros', () => {
   assert.strictEqual(normalizeBarcode('P_0007290004131074'), '7290004131074');

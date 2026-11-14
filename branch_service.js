@@ -82,10 +82,34 @@ function citySuggestions(cities, typed) {
     return t ? cities.filter(c => normCity(c).startsWith(t)) : [];
 }
 
-// Branches whose city, address, name or delivery areas mention the city. No city means no filter.
+// Branches whose city, name or delivery areas mention the city. No city means no filter.
+// The street address counts only when nothing else matched: "שדרות ירושלים" in Kiryat Motzkin is not a Jerusalem branch.
 function branchesInCity(branches, city) {
     const t = normCity(String(city || '').split(' - ')[0]);
-    return t ? branches.filter(b => [b.city, b.address, b.name, b.areas].some(f => normCity(f).includes(t))) : branches;
+    if (!t) return branches;
+    const mentions = pick => branches.filter(b => pick(b).some(f => normCity(f).includes(t)));
+    const byPlace = mentions(b => [b.city, b.name, b.areas]);
+    return byPlace.length ? byPlace : mentions(b => [b.address]);
+}
+
+// Victory's branch list has no delivery areas. Its own site asks this endpoint which branch delivers to an address.
+// shortcut: asks by city only, so a city split between two branches gets one of them; add a street field if that matters.
+const victoryDeliveryCache = new Map();
+async function fetchVictoryDeliveryBranchId(city) {
+    if (victoryDeliveryCache.has(city)) return victoryDeliveryCache.get(city);
+    let id = null;
+    try {
+        const response = await fetch('https://api.victoryonline.co.il/api/web/delivery-slots', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ city, street: '', houseNumber: '' })
+        });
+        id = branchFromDeliverySlots(await response.json());
+        victoryDeliveryCache.set(city, id);
+    } catch (error) {
+        console.error('Error asking Victory which branch delivers to', city, error);
+    }
+    return id;
 }
 
 async function getAllBranches() {
@@ -102,7 +126,8 @@ async function getAllBranches() {
 // לשימוש בתוך התוסף (Chrome Extension)
 if (typeof window !== 'undefined') {
     window.branchService = {
-        getAllBranches
+        getAllBranches,
+        fetchVictoryDeliveryBranchId
     };
 }
 

@@ -15,4 +15,10 @@ function cityFromAddress(address, name) {
   const city = a.includes(',') ? a.slice(a.lastIndexOf(',') + 1).trim() : '';
   return city || name || '';
 }
-if (typeof module !== 'undefined') module.exports = { normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress };
+// Victory's delivery-slots answer is {date: [slot]}; every slot carries the branch that delivers to that address.
+function branchFromDeliverySlots(json) {
+  if (!json || json.status !== 'success') return null;
+  const slot = Object.values(json.data || {}).flat().find(s => s && s.branchId);
+  return slot ? String(slot.branchId) : null;
+}
+if (typeof module !== 'undefined') module.exports = { normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress, branchFromDeliverySlots };
