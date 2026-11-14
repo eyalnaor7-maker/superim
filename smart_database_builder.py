@@ -39,7 +39,7 @@ if sys.platform == 'win32':
 # ==========================================
 
 # טוקן ויקטורי - חובה לעדכן! (העתק מ-LocalStorage > frontend > token באתר ויקטורי)
-VICTORY_TOKEN = "83402ecd207b06ff2a81ff7306167fb5fca540dfda97c5df2c88c063485d6a9ebdf91734c9386d149e35293ac391b0ab53021d205806af4e04a69c228f92e162"
+VICTORY_TOKEN = os.environ.get("VICTORY_TOKEN", "")
 
 # חנויות ספציפיות
 RAMI_LEVY_STORE_ID = 331

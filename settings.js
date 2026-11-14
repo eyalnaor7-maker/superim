@@ -1,6 +1,7 @@
 // settings.js
 
 let allBranches = [];
+const autoPicked = {}; // network key -> the current selection was our guess, not the user's
 
 document.addEventListener('DOMContentLoaded', async () => {
     const loadingDiv = document.getElementById('loading');
@@ -24,8 +25,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // מאזין לשינוי בעיר כדי לסנן
     cityInput.addEventListener('input', (e) => {
-        const cityFilter = e.target.value.trim().toLowerCase();
-        populateDropdowns(cityFilter);
+        const typed = e.target.value.trim();
+        document.getElementById('city-list').replaceChildren(...citySuggestions(ISRAEL_CITIES, typed).map(c => new Option(c, c)));
+        populateDropdowns(typed.length > 1 ? typed : ''); // one letter matches half the branches by accident
     });
 
     // טעינת הגדרות שמורות מקודם
@@ -35,6 +37,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('save-btn').addEventListener('click', saveSettings);
 });
 
+function branchOption(branch) {
+    const option = new Option(`${branch.name}${branch.city && branch.city !== branch.name ? ` (${branch.city})` : ''}`, branch.id);
+    option.dataset.name = branch.name;
+    return option;
+}
+
 function populateDropdowns(cityFilter) {
     const networks = {
         'shufersal': document.getElementById('shufersal-branch'),
@@ -43,67 +51,53 @@ function populateDropdowns(cityFilter) {
         'machsanei_hashuk': document.getElementById('mck-branch')
     };
 
-    // עבור כל רשת, ניצור אופציות מתאימות
     for (const [networkKey, selectEl] of Object.entries(networks)) {
-        // שמירת הבחירה הנוכחית אם קיימת
         const currentValue = selectEl.value;
-
-        // סינון סניפים של הרשת הספציפית, ואם יש חיפוש עיר - סינון לפי עיר
         const networkBranches = allBranches.filter(b => b.network === networkKey);
-        
-        let filteredBranches = networkBranches;
-        if (cityFilter) {
-            filteredBranches = networkBranches.filter(b => 
-                (b.city && b.city.toLowerCase().includes(cityFilter)) || 
-                (b.address && b.address.toLowerCase().includes(cityFilter)) ||
-                (b.name && b.name.toLowerCase().includes(cityFilter))
-            );
-        }
+        const inCity = cityFilter ? branchesInCity(networkBranches, cityFilter) : [];
+        const cityMatched = inCity.length > 0;
+        // no branch in the city: offer the whole chain rather than an empty list
+        const shown = cityMatched ? inCity : networkBranches;
 
-        // אם אין תוצאות בסינון עיר, נציג את כל סניפי הרשת כדי לא להשאיר ריק לגמרי
-        if (filteredBranches.length === 0 && cityFilter) {
-            filteredBranches = networkBranches;
-        }
+        // an empty list means the chain's site did not answer: say so instead of looking like "no branches"
+        const placeholder = networkBranches.length === 0 ? 'רשימת הסניפים לא נטענה — רעננו את הדף'
+            : (cityFilter && !cityMatched ? 'אין סניף בעיר — בחרו סניף אחר' : '-- בחר סניף --');
+        selectEl.replaceChildren(new Option(placeholder, ''), ...shown.map(branchOption));
 
-        // בניית ה-HTML של האופציות
-        selectEl.innerHTML = '<option value="">-- בחר סניף --</option>';
-        filteredBranches.forEach(branch => {
-            const option = document.createElement('option');
-            option.value = branch.id;
-            const cityText = branch.city ? ` (${branch.city})` : '';
-            option.textContent = `${branch.name}${cityText}`;
-            option.dataset.name = branch.name;
-            selectEl.appendChild(option);
-        });
-
-        // החזרת הערך שנבחר אם הוא עדיין ברשימה
-        if (currentValue && Array.from(selectEl.options).some(opt => opt.value === currentValue)) {
-            selectEl.value = currentValue;
+        if (currentValue && !autoPicked[networkKey] && shown.some(b => b.id === currentValue)) {
+            selectEl.value = currentValue; // the user's own choice stays while it is still offered
+        } else if (cityMatched) {
+            selectEl.value = shown[0].id;
+            autoPicked[networkKey] = true;
         }
+        selectEl.onchange = () => { autoPicked[networkKey] = false; };
     }
 }
 
 function loadSavedSettings() {
     chrome.storage.sync.get(['userSettings', 'savedCity'], (data) => {
         const userSettings = data.userSettings || {};
-        
+
         if (data.savedCity) {
             document.getElementById('city-input').value = data.savedCity;
-            populateDropdowns(data.savedCity); // סינון לפי העיר השמורה
+            populateDropdowns(data.savedCity);
         }
 
-        if (userSettings.shufersal && userSettings.shufersal.branchId) {
-            document.getElementById('shufersal-branch').value = userSettings.shufersal.branchId;
-        }
-        if (userSettings.ramiLevy && userSettings.ramiLevy.branchId) {
-            document.getElementById('rami-levy-branch').value = userSettings.ramiLevy.branchId;
-        }
-        if (userSettings.victory && userSettings.victory.branchId) {
-            document.getElementById('victory-branch').value = userSettings.victory.branchId;
-        }
-        if (userSettings.machsaneiHashuk && userSettings.machsaneiHashuk.branchId) {
-            document.getElementById('mck-branch').value = userSettings.machsaneiHashuk.branchId;
-        }
+        [
+            ['shufersal', 'shufersal-branch', userSettings.shufersal?.branchId],
+            ['rami_levy', 'rami-levy-branch', userSettings.ramiLevy?.branchId],
+            // an id saved before Victory's 2026 re-platform is a different id space, not a choice
+            ['victory', 'victory-branch', userSettings.victory?.platform === 2 ? userSettings.victory.branchId : ''],
+            ['machsanei_hashuk', 'mck-branch', userSettings.machsaneiHashuk?.branchId]
+        ].forEach(([network, selectId, id]) => {
+            const branch = id && allBranches.find(b => b.network === network && b.id === String(id));
+            if (!branch) return;
+            const selectEl = document.getElementById(selectId);
+            // a saved branch outside the saved city must still be shown as selected
+            if (!Array.from(selectEl.options).some(o => o.value === branch.id)) selectEl.appendChild(branchOption(branch));
+            selectEl.value = branch.id;
+            autoPicked[network] = false;
+        });
     });
 }
 
@@ -125,6 +119,7 @@ function saveSettings() {
             branchName: ramiLevySelect.options[ramiLevySelect.selectedIndex]?.dataset.name || ''
         },
         victory: {
+            platform: 2, // branch ids saved before Victory's 2026 re-platform are a different id space and are ignored
             branchId: victorySelect.value,
             branchName: victorySelect.options[victorySelect.selectedIndex]?.dataset.name || ''
         },
@@ -136,7 +131,7 @@ function saveSettings() {
 
     chrome.storage.sync.set({ userSettings: userSettings, savedCity: city }, () => {
         const status = document.getElementById('statusMessage');
-        status.textContent = 'ההגדרות נשמרו בהצלחה! ✅';
+        status.textContent = 'ההגדרות נשמרו';
         status.className = 'status-success';
         status.style.display = 'block';
         

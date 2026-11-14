@@ -130,7 +130,7 @@ async function transferCartToShufersal(cartItems) {
         }
     }
 
-    console.log("Shufersal Injector: Detected CSRF Token:", csrfToken, "Source:", tokenSource);
+    console.log("Shufersal Injector: CSRF token detected, source:", tokenSource);
     console.log("Shufersal Injector: Items to transfer:", cartItems);
 
     if (!csrfToken) {

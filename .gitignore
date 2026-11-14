@@ -89,3 +89,16 @@ Thumbs.db
 
 # API keys (NEVER push to GitHub!)
 config.json
+
+# Packaging and local scratch
+*.zip
+*.gz
+scratch/
+.omc/
+prices_backup_*.json
+dist/
+apply_db_changes.py
+
+# Python bytecode
+__pycache__/
+*.pyc

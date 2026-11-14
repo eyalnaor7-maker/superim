@@ -26,7 +26,7 @@ RAMI_LEVY_FILES = glob.glob('רמי לוי*.xml') + glob.glob('*7290058140886*.x
 VICTORY_FILES   = glob.glob('ויקטורי*.xml') + glob.glob('*7290696200003*.xml')
 
 STORE_ID_RAMI_LEVY = 331
-VICTORY_TOKEN = "83402ecd207b06ff2a81ff7306167fb5fca540dfda97c5df2c88c063485d6a9ebdf91734c9386d149e35293ac391b0ab53021d205806af4e04a69c228f92e162"
+VICTORY_TOKEN = os.environ.get("VICTORY_TOKEN", "")
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",

@@ -1,7 +1,7 @@
 // branch_service.js
 
 const API_ENDPOINTS = {
-    victory: 'https://www.victoryonline.co.il/v2/retailers/1470/branches?appId=4',
+    victory: 'https://api.victoryonline.co.il/api/web/branches',
     machsanei_hashuk: 'https://www.mck.co.il/v2/retailers/1107/branches?appId=4'
 };
 
@@ -15,14 +15,18 @@ async function fetchBranchesGeneric(network) {
         
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
-        
+        const json = await response.json();
+        // Victory's new API wraps everything in {status, data}
+        const data = network === 'victory' ? (json?.status === 'success' && Array.isArray(json.data) ? json.data : [])
+            : (Array.isArray(json) ? json : (json?.branches || [])); // Machsanei HaShuk wraps the list in {branches}
+
         // ממפה את התשובה לפורמט אחיד
         return data.map(b => ({
             id: b.id.toString(),
             name: b.name,
-            city: b.city || '',
-            address: b.address || '',
+            city: network === 'victory' ? cityFromAddress(b.address, b.name) : (b.city || b.name || ''),
+            address: b.address || b.location || '',
+            areas: (b.areas || []).map(a => a.name).join(', '), // delivery areas, so a city the branch delivers to finds it
             network: network
         }));
     } catch (error) {
@@ -67,6 +71,23 @@ async function fetchRamiLevyBranches() {
     ];
 }
 
+// The official city list and the chains' own data spell things differently ("קריית"/"קרית", hyphens, quote marks).
+function normCity(s) {
+    return String(s || '').replace(/קריית/g, 'קרית').replace(/["'׳״-]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Cities that start with what was typed, for the city input's suggestion list.
+function citySuggestions(cities, typed) {
+    const t = normCity(typed);
+    return t ? cities.filter(c => normCity(c).startsWith(t)) : [];
+}
+
+// Branches whose city, address, name or delivery areas mention the city. No city means no filter.
+function branchesInCity(branches, city) {
+    const t = normCity(String(city || '').split(' - ')[0]);
+    return t ? branches.filter(b => [b.city, b.address, b.name, b.areas].some(f => normCity(f).includes(t))) : branches;
+}
+
 async function getAllBranches() {
     const [victory, mck, shufersal, ramiLevy] = await Promise.all([
         fetchBranchesGeneric('victory'),
@@ -84,3 +105,5 @@ if (typeof window !== 'undefined') {
         getAllBranches
     };
 }
+
+if (typeof module !== 'undefined') module.exports = { normCity, citySuggestions, branchesInCity };

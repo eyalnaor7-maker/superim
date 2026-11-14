@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>דגמי עיצוב לפופאפ</title>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0}
+body{background:#e9ecf2;font-family:'Rubik','Segoe UI',Arial,sans-serif;padding:32px;color:#111827}
+h1{font-size:20px;margin-bottom:4px}
+.note{color:#6b7280;font-size:14px;margin-bottom:28px}
+.cols{display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start}
+.col{width:360px}
+.col h2{font-size:17px;margin-bottom:2px}
+.col>p{font-size:13px;color:#6b7280;margin-bottom:4px}
+.cap{font-size:12px;color:#6b7280;margin:18px 0 8px}
+
+.pop{width:360px;border-radius:20px;overflow:hidden;background:var(--bg);color:var(--tx);box-shadow:0 20px 50px -12px rgba(15,23,42,.35);font-size:14px;line-height:1.45}
+.num{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.top{display:flex;justify-content:space-between;align-items:center;font-size:15px;margin-bottom:22px}
+.brand{display:flex;gap:8px;align-items:center;font-weight:600}
+.ic{width:20px;height:20px;opacity:.85}
+.hero{padding:18px 20px 46px;background:var(--hero);color:var(--htx)}
+.lbl{font-size:13px;opacity:.82}
+.big{font-size:46px;font-weight:700;letter-spacing:-.03em;line-height:1.1;margin:2px 0 10px}
+.hero.s .big{font-size:34px}
+.pill{display:inline-block;font-size:12px;font-weight:500;padding:4px 10px;border-radius:99px;background:var(--pill);color:var(--ptx)}
+.win{margin:-28px 14px 0;padding:14px;border-radius:16px;background:var(--card);box-shadow:var(--sh);border:1px solid var(--ln);position:relative}
+.row{display:flex;align-items:center;gap:12px}
+.grow{flex:1;min-width:0}
+.av{width:38px;height:38px;border-radius:12px;background:var(--c);color:#fff;font-weight:700;font-size:17px;display:grid;place-items:center;flex:none}
+.sub{font-size:12px;color:var(--sub)}
+.c{text-align:center;margin-top:10px}
+.tot{font-size:20px}
+.cta{width:100%;margin-top:14px;height:46px;border:0;border-radius:12px;font-family:inherit;font-weight:600;font-size:15px;background:var(--cta);color:var(--ctx);box-shadow:var(--csh);cursor:pointer}
+.list{padding:8px 20px 4px}
+.list .row{padding:12px 0;border-bottom:1px solid var(--ln)}
+.end{text-align:left}
+.diff{font-size:12px;color:var(--bad);font-weight:500}
+.warn{font-size:12px;color:var(--wn)}
+.foot{padding:12px 20px 16px;font-size:13px;color:var(--sub);display:flex;justify-content:space-between}
+.pad{padding-bottom:18px}
+
+.t1{--bg:#f8fafc;--tx:#0f172a;--sub:#64748b;--ln:#e8edf3;--card:#fff;--hero:linear-gradient(140deg,#064e3b,#047857 55%,#10b981);--htx:#fff;--pill:rgba(255,255,255,.18);--ptx:#fff;--sh:0 10px 30px -10px rgba(6,78,59,.35);--cta:linear-gradient(180deg,#fcd34d,#f59e0b);--ctx:#422006;--csh:0 6px 16px -4px rgba(245,158,11,.55);--bad:#dc2626;--wn:#b45309}
+.t2{--bg:#0b1020;--tx:#e8ecf8;--sub:#8b94b0;--ln:#1e2740;--card:#131a30;--hero:radial-gradient(120% 90% at 100% 0,#1b3a5c 0,#0b1020 60%);--htx:#fff;--pill:rgba(52,211,153,.14);--ptx:#6ee7b7;--sh:0 0 0 1px rgba(52,211,153,.25),0 16px 40px -12px rgba(16,185,129,.35);--cta:linear-gradient(90deg,#34d399,#22d3ee);--ctx:#04211a;--csh:0 8px 24px -6px rgba(34,211,238,.5);--bad:#fb7185;--wn:#fbbf24}
+.t2 .big{background:linear-gradient(90deg,#22d3ee,#6ee7b7);-webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block}
+.t3{--bg:#fffaf3;--tx:#1c1917;--sub:#78716c;--ln:#efe6d8;--card:#fff;--hero:linear-gradient(135deg,#f97316,#ef4444);--htx:#fff;--pill:#fff;--ptx:#c2410c;--sh:0 10px 28px -12px rgba(194,65,12,.4);--cta:#1c1917;--ctx:#fff;--csh:0 8px 18px -6px rgba(28,25,23,.5);--bad:#dc2626;--wn:#b45309}
+.t3 .win{border:2px dashed #fdba74}
+.t3 .win.r::before,.t3 .win.r::after{content:"";position:absolute;top:60px;width:16px;height:16px;border-radius:50%;background:var(--bg);border:2px dashed #fdba74}
+.t3 .win.r::before{right:-10px}.t3 .win.r::after{left:-10px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+<symbol id="i-cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.4a1 1 0 0 0 1 .8h9.6a1 1 0 0 0 1-.8L21 7H6"/></symbol>
+<symbol id="i-set" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="18" r="2"/></symbol>
+</svg>
+
+<h1>שלושה כיווני עיצוב לפופאפ</h1>
+<p class="note">בגודל אמיתי (360 פיקסלים). המספרים לדוגמה. בכל כיוון: מסך פתיחה ומסך תוצאות.</p>
+
+<div class="cols">
+
+<!-- 1 -->
+<div class="col">
+<h2>1 · אמרלד</h2><p>ירוק עמוק, החיסכון במספר ענק, כפתור זהוב</p>
+<div class="cap">פתיחה</div>
+<div class="pop t1 pad">
+ <div class="hero s">
+  <div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span><svg class="ic"><use href="#i-set"/></svg></div>
+  <div class="lbl">זיהינו עגלה בשופרסל</div>
+  <div class="big">23 מוצרים</div>
+ </div>
+ <div class="win"><button class="cta" style="margin-top:0">להשוות מחירים ב-4 רשתות ←</button><div class="sub c">המחירים נבדקים עכשיו מול אתרי הרשתות</div></div>
+</div>
+<div class="cap">תוצאות</div>
+<div class="pop t1">
+ <div class="hero">
+  <div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span><svg class="ic"><use href="#i-set"/></svg></div>
+  <div class="lbl">החיסכון שלך בעגלה הזו</div>
+  <div class="big num">₪37.80</div>
+  <span class="pill">8% פחות משופרסל</span>
+ </div>
+ <div class="win r">
+  <div class="row"><span class="av" style="--c:#2563eb">ר</span><div class="grow"><b>רמי לוי</b><div class="sub">הכי זול · כל 23 המוצרים נמצאו</div></div><b class="num tot">₪412.30</b></div>
+  <button class="cta">לבנות את העגלה ברמי לוי ←</button>
+ </div>
+ <div class="list">
+  <div class="row"><span class="av" style="--c:#f97316">ו</span><div class="grow"><b>ויקטורי</b><div class="sub">חסרים 2 מוצרים</div></div><div class="end"><b class="num">₪428.90</b><div class="diff num">+₪16.60</div></div></div>
+  <div class="row"><span class="av" style="--c:#e11d48">ש</span><div class="grow"><b>שופרסל</b><div class="sub">העגלה הנוכחית שלך</div></div><div class="end"><b class="num">₪450.10</b><div class="diff num">+₪37.80</div></div></div>
+  <div class="row"><span class="av" style="--c:#7c3aed">מ</span><div class="grow"><b>מחסני השוק</b><div class="warn">להתחבר לאתר למחיר עדכני</div></div><div class="end sub num">₪441.00<br>מחיר ישן</div></div>
+ </div>
+ <div class="foot"><span>פירוט לפי מוצר</span><span>‹</span></div>
+</div>
+</div>
+
+<!-- 2 -->
+<div class="col">
+<h2>2 · לילה</h2><p>כהה ויוקרתי, מספרים זוהרים</p>
+<div class="cap">פתיחה</div>
+<div class="pop t2 pad">
+ <div class="hero s">
+  <div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span><svg class="ic"><use href="#i-set"/></svg></div>
+  <div class="lbl">זיהינו עגלה בשופרסל</div>
+  <div class="big">23 מוצרים</div>
+ </div>
+ <div class="win"><button class="cta" style="margin-top:0">להשוות מחירים ב-4 רשתות ←</button><div class="sub c">המחירים נבדקים עכשיו מול אתרי הרשתות</div></div>
+</div>
+<div class="cap">תוצאות</div>
+<div class="pop t2">
+ <div class="hero">
+  <div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span><svg class="ic"><use href="#i-set"/></svg></div>
+  <div class="lbl">החיסכון שלך בעגלה הזו</div>
+  <div class="big num">₪37.80</div><br>
+  <span class="pill">8% פחות משופרסל</span>
+ </div>
+ <div class="win r">
+  <div class="row"><span class="av" style="--c:#2563eb">ר</span><div class="grow"><b>רמי לוי</b><div class="sub">הכי זול · כל 23 המוצרים נמצאו</div></div><b class="num tot">₪412.30</b></div>
+  <button class="cta">לבנות את העגלה ברמי לוי ←</button>
+ </div>
+ <div class="list">
+  <div class="row"><span class="av" style="--c:#f97316">ו</span><div class="grow"><b>ויקטורי</b><div class="sub">חסרים 2 מוצרים</div></div><div class="end"><b class="num">₪428.90</b><div class="diff num">+₪16.60</div></div></div>
+  <div class="row"><span class="av" style="--c:#e11d48">ש</span><div class="grow"><b>שופרסל</b><div class="sub">העגלה הנוכחית שלך</div></div><div class="end"><b class="num">₪450.10</b><div class="diff num">+₪37.80</div></div></div>
+  <div class="row"><span class="av" style="--c:#7c3aed">מ</span><div class="grow"><b>מחסני השוק</b><div class="warn">להתחבר לאתר למחיר עדכני</div></div><div class="end sub num">₪441.00<br>מחיר ישן</div></div>
+ </div>
+ <div class="foot"><span>פירוט לפי מוצר</span><span>‹</span></div>
+</div>
+</div>
+
+<!-- 3 -->
+<div class="col">
+<h2>3 · קופון</h2><p>חם ושמח, התוצאה נראית כמו קופון הנחה</p>
+<div class="cap">פתיחה</div>
+<div class="pop t3 pad">
+ <div class="hero s">
+  <div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span><svg class="ic"><use href="#i-set"/></svg></div>
+  <div class="lbl">זיהינו עגלה בשופרסל</div>
+  <div class="big">23 מוצרים</div>
+ </div>
+ <div class="win"><button class="cta" style="margin-top:0">להשוות מחירים ב-4 רשתות ←</button><div class="sub c">המחירים נבדקים עכשיו מול אתרי הרשתות</div></div>
+</div>
+<div class="cap">תוצאות</div>
+<div class="pop t3">
+ <div class="hero">
+  <div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span><svg class="ic"><use href="#i-set"/></svg></div>
+  <div class="lbl">החיסכון שלך בעגלה הזו</div>
+  <div class="big num">₪37.80</div>
+  <span class="pill">8% פחות משופרסל</span>
+ </div>
+ <div class="win r">
+  <div class="row"><span class="av" style="--c:#2563eb">ר</span><div class="grow"><b>רמי לוי</b><div class="sub">הכי זול · כל 23 המוצרים נמצאו</div></div><b class="num tot">₪412.30</b></div>
+  <button class="cta">לבנות את העגלה ברמי לוי ←</button>
+ </div>
+ <div class="list">
+  <div class="row"><span class="av" style="--c:#f97316">ו</span><div class="grow"><b>ויקטורי</b><div class="sub">חסרים 2 מוצרים</div></div><div class="end"><b class="num">₪428.90</b><div class="diff num">+₪16.60</div></div></div>
+  <div class="row"><span class="av" style="--c:#e11d48">ש</span><div class="grow"><b>שופרסל</b><div class="sub">העגלה הנוכחית שלך</div></div><div class="end"><b class="num">₪450.10</b><div class="diff num">+₪37.80</div></div></div>
+  <div class="row"><span class="av" style="--c:#7c3aed">מ</span><div class="grow"><b>מחסני השוק</b><div class="warn">להתחבר לאתר למחיר עדכני</div></div><div class="end sub num">₪441.00<br>מחיר ישן</div></div>
+ </div>
+ <div class="foot"><span>פירוט לפי מוצר</span><span>‹</span></div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

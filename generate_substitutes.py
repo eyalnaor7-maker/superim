@@ -15,8 +15,7 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 USE_GEMINI = True
-GEMINI_API_KEY = "AIzaSyCu_EXWBvOSXoMn_9lqB_e3JFm7wZ702Bk"
-
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 # Load keys from config.json if available
 if os.path.exists('config.json'):
     try:
