@@ -217,7 +217,8 @@ async function scanVictoryCart() {
         lines.forEach(line => {
             const m = String(line.featuredImage || '').match(/\/(?:product-images|gs1)\/(\d+)\//);
             const quantity = Number(line.quantity) || 1;
-            const total = line.totalPrice != null ? parseFloat(line.totalPrice) : (parseFloat(line.price) || 0) * quantity;
+            const lineTotal = line.totalSalePrice ?? line.totalPrice; // totalSalePrice exists only when a sale applies, and is what the shopper pays
+            const total = lineTotal != null ? parseFloat(lineTotal) : (parseFloat(line.price) || 0) * quantity;
             products.push({
                 code: m ? m[1] : 'victory-' + line.id, // no barcode in the image path: keep the line so it shows as unmatched
                 name: line.name || 'מוצר',
@@ -2193,7 +2194,8 @@ async function compareCarts() {
                 const mckCart = [];
                 const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
                 allSources.forEach(i => {
-                    if (!i.isMCKMissing && (i.mck_code || i.mck_retailer_id) && i.quantity > 0) {
+                    // items without an internal code still go, so the site shows why nothing was added instead of staying silent
+                    if (!i.isMCKMissing && i.quantity > 0) {
                         const cleanBarcode = i.shufersal_code ? i.shufersal_code.replace('P_', '') : '';
                         mckCart.push({
                             name: i.name, amount: i.quantity, quantity: i.quantity,
