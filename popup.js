@@ -4,140 +4,7 @@ let finalCartToTransfer = [];
 // ===== UTILITIES =====
 const formatPrice = amount => `₪${parseFloat(amount || 0).toFixed(2)}`;
 
-const STOP_WORDS = new Set(['גרם', 'מ"ל', 'מל', 'ליטר', 'ק"ג', 'קג', 'יח', 'יחידות', 'של', 'עם', 'בלי', 'ו', 'ב', 'ל', 'מ', 'פרוס', 'טרי', 'קפוא']);
-
-const BRAND_WORDS = new Set(['שופרסל', 'רמי לוי', 'ויקטורי', 'מיה', 'אסם', 'עלית', 'תלמה', 'טרה', 'תנובה', 'שטראוס', 'יטבתה', 'סוגת', 'וילי פוד', 'מאסטר שף', 'פריגת']);
-
-function extractWeight(name) {
-    const match = name.match(/(\d+\.?\d*)\s*(גרם|מ"ל|מל|ליטר|ק"ג|קג)/i);
-    if (!match) return null;
-    let value = parseFloat(match[1]);
-    let unit = match[2].replace('"', '').toLowerCase();
-    if (unit === 'קג' || unit === 'ק"ג') { value *= 1000; unit = 'גרם'; }
-    if (unit === 'ליטר') { value *= 1000; unit = 'מל'; }
-    return { value, unit };
-}
-
-async function findCandidatesFromDB(productName, targetStore) {
-    if (!SUPABASE_ANON_KEY) {
-        const allTokens = productName.split(/[\s\-\/,.'"%*]+/).map(w => w.trim()).filter(w => w.length > 1 && !STOP_WORDS.has(w) && !/^\d+$/.test(w));
-        const candidates = [];
-        
-        for (const [, item] of Object.entries(pricesData)) {
-            if (item.name === productName) continue;
-            let score = 0;
-            for (const token of allTokens) {
-                if (item.name.includes(token)) score++;
-            }
-            if (score >= 2) {
-                let codeKey = `${targetStore}_code`;
-                let priceKey = `${targetStore}_price`;
-                let code = item[codeKey] || (targetStore === 'victory' ? item.victory_retailer_id : null);
-                let price = item[priceKey] || 0;
-                
-                if (code) {
-                    candidates.push({
-                        code: String(code),
-                        name: item.name,
-                        price: parseFloat(price),
-                        score: score
-                    });
-                }
-            }
-        }
-        candidates.sort((a, b) => b.score - a.score);
-        return candidates.slice(0, 8);
-    }
-
-    const headers = {
-        "apikey": SUPABASE_ANON_KEY,
-        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-        "Content-Type": "application/json"
-    };
-
-    try {
-        // Fallback since find_candidates RPC is missing.
-        // We take the longest meaningful words from the product name to build an 'ilike' query
-        const words = productName.split(/[\s\-\/,.'"%*]+/).filter(w => w.length > 2 && !STOP_WORDS.has(w));
-        if (words.length === 0) return [];
-        
-        // Take up to 2 significant words for the search to ensure we get some matches
-        const searchWords = words.slice(0, 2);
-        let ilikeConditions = searchWords.map(w => `name.ilike.%${w}%`).join(',');
-        
-        const targetStoreDbName = targetStore === 'ramiLevy' ? 'rami_levy' : (targetStore === 'machsaneiHashuk' ? 'machsanei_hashuk' : targetStore);
-
-        const params = new URLSearchParams({
-            select: 'barcode,name,store_products!inner(store_code,price)',
-            'store_products.store_name': `eq.${targetStoreDbName}`,
-            or: `(${ilikeConditions})`,
-            limit: 8
-        });
-
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/products?${params}`, { headers });
-        
-        if (!res.ok) throw new Error(`Candidates fetch failed: ${res.statusText}`);
-        const data = await res.json();
-        
-        // Map to expected format
-        return data.map(p => ({
-            code: p.store_products && p.store_products[0] ? String(p.store_products[0].store_code) : p.barcode,
-            name: p.name,
-            price: p.store_products && p.store_products[0] ? parseFloat(p.store_products[0].price || 0) : 0
-        })).filter(c => c.price > 0);
-        
-    } catch (e) {
-        console.error("שגיאה בחיפוש תחליפים ב-Supabase:", e);
-        return [];
-    }
-}
-
-
-
-function findProductByName(searchName, pricesData) {
-    const query = extractSearchQuery(searchName);
-    for (const [key, item] of Object.entries(pricesData)) {
-        const dbQuery = extractSearchQuery(item.name);
-        if (query === dbQuery) return { key, item };
-    }
-    return null;
-}
-
-const STORE_SYNONYMS = [
-    [/של פעם/g, 'אורגינל'],
-    [/חמוצה/g, ''],
-];
-
-function extractSearchQuery(name) {
-    let query = name;
-    for (const [pattern, replacement] of STORE_SYNONYMS) {
-        query = query.replace(pattern, replacement);
-    }
-    return query
-        .replace(/\d+\.?\d*\s*%/g, '')
-        .replace(/\d+\.?\d*\s*(גרם|מ"ל|מל|ליטר|ק"ג|קג|יח'?)/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-// ===== AI SUBSTITUTE ENGINE (Gemini) =====
-let GEMINI_API_KEY = ''; 
-const GEMINI_MODEL = 'gemini-2.0-flash-lite';
-let SUPABASE_URL = 'https://icdethibkzwzguwmfoef.supabase.co';
-let SUPABASE_ANON_KEY = '';
 let pricesData = {};
-
-try {
-    fetch(chrome.runtime.getURL('config.json'))
-        .then(r => r.json())
-        .then(cfg => {
-            GEMINI_API_KEY = cfg.gemini_api_key || '';
-            if (cfg.supabase_url) SUPABASE_URL = cfg.supabase_url;
-            SUPABASE_ANON_KEY = cfg.supabase_anon_key || '';
-        })
-        .catch(() => {});
-} catch(e) {}
-
 
 
 // ===== AI SUBSTITUTE ENGINE HELPERS =====
@@ -154,7 +21,7 @@ async function fetchSubstituteDetails(substituteBarcodes, headers) {
     if (missingBarcodes.length === 0) return;
     
     const queryParams = new URLSearchParams({
-        select: 'barcode,name,store_products(store_name,store_code,price)',
+        select: 'barcode,name,store_products(store_name,store_code,price,updated_at)',
         barcode: `in.(${missingBarcodes.join(',')})`
     });
     
@@ -178,6 +45,7 @@ async function fetchSubstituteDetails(substituteBarcodes, headers) {
                 p.store_products.forEach(sp => {
                     itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
                     itemData[`${sp.store_name}_code`] = sp.store_code;
+                    itemData[`${sp.store_name}_updated_at`] = sp.updated_at || null;
                     if (sp.store_name === 'victory') {
                         itemData.victory_retailer_id = sp.store_code;
                     }
@@ -191,147 +59,9 @@ async function fetchSubstituteDetails(substituteBarcodes, headers) {
     }
 }
 
-async function searchStoreForCandidates(productName, storeName, originalBarcode) {
-    let candidates = [];
-    
-    if (storeName === 'rami_levy' || storeName === 'ramiLevy') {
-        let storeId = '331';
-        try {
-            const rlStorage = localStorage.getItem('ramilevy') || sessionStorage.getItem('ramilevy');
-            if (rlStorage) {
-                const parsed = JSON.parse(rlStorage);
-                if (parsed.authuser?.user?.store_id) {
-                    storeId = String(parsed.authuser.user.store_id);
-                }
-            }
-        } catch(e) {}
-        try {
-            const resp = await fetch('https://www.rami-levy.co.il/api/catalog', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ q: productName, store: Number(storeId) })
-            });
-            if (resp.ok) {
-                const data = await resp.json();
-                candidates = (data.data || []).map(p => ({
-                    code: String(p.id),
-                    barcode: p.barcode ? String(p.barcode) : null,
-                    name: p.name,
-                    price: parseFloat(p.price?.price || 0),
-                    outOfStock: !((p.available_in || []).map(Number).includes(Number(storeId)))
-                })).filter(c => !c.outOfStock && c.price > 0 && c.code !== originalBarcode);
-            }
-        } catch(e) {
-            console.error("Rami Levy candidate search failed:", e);
-        }
-    }
-    
-    if (candidates.length === 0 && SUPABASE_ANON_KEY) {
-        try {
-            const dbCandidates = await findCandidatesFromDB(productName, storeName);
-            candidates = dbCandidates.map(c => ({
-                code: c.code,
-                name: c.name,
-                price: parseFloat(c.price || 0),
-                outOfStock: false
-            }));
-        } catch(e) {
-            console.error("Database candidate search failed:", e);
-        }
-    }
-    
-    return candidates;
-}
 
-async function askGeminiForSubstitute(originalName, candidates, storeName) {
-    if (!candidates || candidates.length === 0 || !GEMINI_API_KEY) return null;
-    
-    const candidatesText = candidates.map((c, i) => `${i+1}. ${c.name} (מחיר: ₪${c.price.toFixed(2)})`).join('\n');
-    
-    const prompt = `אתה עוזר לבחור מוצר חלופי בסופרמרקט עבור מוצר מקורי שחסר במלאי.
-מוצר מקורי: "${originalName}"
-רשימת מועמדים ברשת ${storeName}:
-${candidatesText}
 
-אנא בחר את המוצר שהוא החלופה הטובה ביותר. שים לב לפרמטרים הבאים:
-- סוג המוצר ושימוש (למשל: חלב, גבינה, לחם, יוגורט).
-- אחוז שומן (למשל: גבינה לבנה 5% צריכה להיות מוחלפת בגבינה לבנה 5% אחרת, לא 9%).
-- משקל/נפח אריזה (למשל: 250 גרם מול 500 גרם).
-- מותג ותכונות נוספות.
 
-ענה אך ורק במספר האינדקס של המוצר הנבחר (למשל: 1 או 2), או 0 אם אין אף מוצר מתאים ברשימה. אל תוסיף שום מילים נוספות.`;
-
-    try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { temperature: 0.1, maxOutputTokens: 10 }
-            })
-        });
-        if (!response.ok) throw new Error(`Gemini request failed: ${response.statusText}`);
-        const resData = await response.json();
-        const text = resData.candidates[0].content.parts[0].text.trim();
-        const index = parseInt(text.match(/\d+/)?.[0] || 0);
-        if (index > 0 && index <= candidates.length) {
-            return candidates[index - 1];
-        }
-    } catch(e) {
-        console.error("Error calling Gemini API:", e);
-    }
-    return null;
-}
-
-async function saveSubstituteToSupabase(originalBarcode, substituteBarcode, headers) {
-    if (!SUPABASE_ANON_KEY || !originalBarcode || !substituteBarcode) return;
-    
-    const orig = originalBarcode.startsWith('P_') ? originalBarcode : `P_${originalBarcode}`;
-    const sub = substituteBarcode.startsWith('P_') ? substituteBarcode : `P_${substituteBarcode}`;
-    
-    const body = {
-        p_original_barcode: orig,
-        p_substitute_barcode_1: sub,
-        p_substitute_barcode_2: null
-    };
-    
-    try {
-        const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_substitute`, {
-            method: 'POST',
-            headers: {
-                ...headers,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(body)
-        });
-        if (resp.ok) {
-            console.log(`Saved substitute to Supabase: ${orig} -> ${sub}`);
-        } else {
-            console.warn(`Failed to save substitute: ${resp.statusText}`);
-        }
-    } catch(e) {
-        console.error("Error saving substitute to Supabase:", e);
-    }
-}
-
-function resolveStoreCodeToBarcode(storeCode, storeName) {
-    if (!storeCode) return null;
-    for (const [barcode, item] of Object.entries(pricesData)) {
-        if (storeName === 'rami_levy' || storeName === 'ramiLevy') {
-            if (String(item.rami_levy_code) === String(storeCode)) return barcode;
-        }
-        if (storeName === 'victory') {
-            if (String(item.victory_code) === String(storeCode) || String(item.victory_retailer_id) === String(storeCode)) return barcode;
-        }
-        if (storeName === 'shufersal') {
-            if (barcode === storeCode || barcode.replace('P_', '') === storeCode) return barcode;
-        }
-        if (storeName === 'machsaneiHashuk') {
-            if (String(item.machsanei_hashuk_code) === String(storeCode)) return barcode;
-        }
-    }
-    return null;
-}
 
 // ===== CHROME HELPERS =====
 function createHiddenTab(url) {
@@ -470,255 +200,31 @@ async function scanRamiLevyCart() {
 }
 
 // ===== VICTORY CART SCANNER =====
+// Runs in the Victory tab via executeScript: must be self-contained.
 async function scanVictoryCart() {
     try {
-        const settingsData = await loadSettings();
-        const userSettings = settingsData.userSettings || {};
-        const victorySettings = userSettings.victory || {};
-        
-        const VICTORY_RETAILER_ID = 1470;
-        const VICTORY_APP_ID = 4;
-
-        function extractLinePrice(line) {
-            const qty = line.quantity || 1;
-            const lwt = line.lineWithTax != null ? parseFloat(line.lineWithTax) : null;
-            const ap = line.actualPrice != null ? parseFloat(line.actualPrice) * qty : null;
-            const orig = line.originalTotalPrice != null ? parseFloat(line.originalTotalPrice) : null;
-            const base = line.price != null ? parseFloat(line.price) * qty : null;
-            const prices = [lwt, ap, orig, base].filter(p => p != null && p > 0);
-            let minPrice = prices.length > 0 ? Math.min(...prices) : 0;
-
-            // Fallback base price from product object
-            const prodRegPrice = line.product?.branch?.regularPrice != null ? parseFloat(line.product.branch.regularPrice) : null;
-            const prodSalePrice = line.product?.branch?.salePrice != null ? parseFloat(line.product.branch.salePrice) : null;
-            const prodPrice = line.product?.price != null ? parseFloat(line.product.price) : null;
-            const basePrice = prodSalePrice ?? prodRegPrice ?? prodPrice ?? (line.price != null ? parseFloat(line.price) : 0);
-            
-            if (minPrice === 0 && basePrice > 0) {
-                minPrice = basePrice * qty;
-            }
-
-            // Apply branch specials if available
-            const specials = line.product?.branch?.specials || line.product?.specials || [];
-            if (specials.length > 0 && basePrice > 0) {
-                for (const special of specials) {
-                    const reqQty = special.firstLevel?.firstPurchaseTotal;
-                    const promoPrice = special.firstLevel?.firstGift?.total ?? special.firstLevel?.total;
-
-                    if (reqQty && promoPrice && qty >= reqQty) {
-                        const promoCount = Math.floor(qty / reqQty);
-                        const remainder = qty % reqQty;
-                        const calculatedPromoTotal = (promoCount * promoPrice) + (remainder * basePrice);
-                        if (minPrice === 0 || calculatedPromoTotal < minPrice) {
-                            minPrice = calculatedPromoTotal;
-                        }
-                    }
-                }
-            }
-
-            return minPrice;
-        }
-
-        function extractBarcode(product) {
-            if (!product) return null;
-            if (product.barcode) return String(product.barcode);
-            if (product.localBarcode) return String(product.localBarcode);
-            let imageUrl = null;
-            if (product.image) {
-                if (typeof product.image === 'string') imageUrl = product.image;
-                else if (typeof product.image === 'object' && product.image.url) imageUrl = product.image.url;
-            }
-            if (!imageUrl && product.images && Array.isArray(product.images) && product.images.length > 0) {
-                const firstImg = product.images[0];
-                if (typeof firstImg === 'string') imageUrl = firstImg;
-                else if (typeof firstImg === 'object' && firstImg.url) imageUrl = firstImg.url;
-            }
-            if (imageUrl && typeof imageUrl === 'string') {
-                const match = imageUrl.match(/\/(\d{8,14})(?:-|\/|\.|\?)/) || imageUrl.match(/\b(\d{8,14})\b/);
-                if (match) return match[1];
-            }
-            return null;
-        }
-
-        // 1. Try local storage / session storage parsing first (Offline / Guest Cart)
-        let localCartItems = null;
-        const allKeys = new Set([...Object.keys(localStorage), ...Object.keys(sessionStorage)]);
-        for (const key of allKeys) {
-            try {
-                const val = localStorage.getItem(key) || sessionStorage.getItem(key);
-                if (!val || val.length < 50) continue;
-                const parsed = JSON.parse(val);
-                if (typeof parsed !== 'object') continue;
-
-                function findCartItems(obj) {
-                    if (!obj || typeof obj !== 'object') return null;
-                    if (Array.isArray(obj)) {
-                        const isCart = obj.length > 0 && obj.every(item => {
-                            if (!item || typeof item !== 'object') return false;
-                            const keys = Object.keys(item).join(',').toLowerCase();
-                            const hasProduct = keys.includes('retailerproductid') || keys.includes('product');
-                            const hasQty = keys.includes('qty') || keys.includes('quantity') || keys.includes('amount');
-                            return hasProduct && hasQty;
-                        });
-                        if (isCart) return obj;
-                    }
-                    for (const k of Object.keys(obj)) {
-                        const found = findCartItems(obj[k]);
-                        if (found) return found;
-                    }
-                    return null;
-                }
-                const found = findCartItems(parsed);
-                if (found) {
-                    localCartItems = found;
-                    break;
-                }
-            } catch(e) {}
-        }
-
-        if (localCartItems) {
-            const products = [];
-            localCartItems.forEach(line => {
-                if (line.type != null && line.type !== 1) return;
-                const product = line.product;
-                if (!product) return;
-                const barcode = extractBarcode(product);
-                if (!barcode) return;
-
-                const name = product.name || 'מוצר';
-                if (name.includes('משלוח') || name.toLowerCase().includes('delivery') || name.toLowerCase().includes('shipping')) return;
-                const quantity = line.quantity || 1;
-                const finalTotal = extractLinePrice(line);
-
-                products.push({
-                    code: String(barcode),
-                    name: name,
-                    quantity: quantity,
-                    victory_total: finalTotal
-                });
-            });
-            if (products.length > 0) return products;
-        }
-
-        // 2. Fallback to API requests if storage search failed
-        let token = '';
-        let branchId = null;
-        let cartId = null;
-        let userId = null;
-
-        for (const key of allKeys) {
-            try {
-                const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
-                if (!raw || raw.length < 4) continue;
-
-                if (/^[0-9a-f]{60,}$/.test(raw.trim())) { token = raw.trim(); continue; }
-
-                const p = JSON.parse(raw);
-                if (typeof p !== 'object' || !p) continue;
-
-                const t = p?.token || p?.authToken || p?.access_token || p?.user?.token || p?.accessToken || p?.auth?.token || p?.session?.token;
-                if (t && typeof t === 'string' && t.length > 40) token = t;
-
-                const uid = p?.userId || p?.user?.id || p?.id || p?.data?.userId || p?.session?.userId;
-                if (uid && !userId) userId = uid;
-
-                const bid = p?.branchId || p?.branch?.id || p?.selectedBranch?.id || p?.currentBranch?.id || p?.store?.branchId;
-                if (bid && !branchId) branchId = Number(bid);
-
-                const cid = p?.cartId || p?.serverCartId || p?.cart?.id || p?.currentCart?.id || p?.activeCart?.id;
-                if (cid && !cartId) cartId = cid;
-
-            } catch(e) {}
-        }
-
-        // Save newly discovered branchId, or fallback to saved one
-        if (branchId) {
-            saveBranchId('victory', branchId);
-        } else if (victorySettings.branchId) {
-            branchId = Number(victorySettings.branchId);
-        }
-
-        if (!token) return [];
-
-        const baseHeaders = {
-            'Accept': 'application/json, text/plain, */*',
-            'Content-Type': 'application/json;charset=UTF-8',
-            'Authorization': token.includes('Bearer') ? token : 'Bearer ' + token
-        };
-
-        if (!branchId) {
-            const discoveryEndpoints = [
-                `/v2/retailers/${VICTORY_RETAILER_ID}/users/me?appId=${VICTORY_APP_ID}`,
-                `/v2/retailers/${VICTORY_RETAILER_ID}/customers/me?appId=${VICTORY_APP_ID}`,
-                `/v2/retailers/${VICTORY_RETAILER_ID}/users/${userId || 0}/settings?appId=${VICTORY_APP_ID}`,
-            ];
-            for (const ep of discoveryEndpoints) {
-                if (branchId) break;
-                try {
-                    const r = await fetch(ep, { headers: baseHeaders });
-                    if (!r.ok) continue;
-                    const d = await r.json();
-                    const bid = d?.branchId || d?.selectedBranchId || d?.branch?.id
-                              || d?.user?.branchId || d?.data?.branchId
-                              || (Array.isArray(d?.branches) && d.branches[0]?.id);
-                    if (bid) branchId = Number(bid);
-                } catch(e) {}
-            }
-        }
-
-        if (!cartId && branchId && userId) {
-            try {
-                const ep = `/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/carts?appId=${VICTORY_APP_ID}&userId=${userId}`;
-                const r = await fetch(ep, { headers: baseHeaders });
-                if (r.ok) {
-                    const d = await r.json();
-                    const cid = d?.cart?.id || d?.id || d?.cartId
-                               || (Array.isArray(d) && d[0]?.id)
-                               || d?.data?.id || d?.data?.cart?.id;
-                    if (cid) cartId = Number(cid);
-                }
-            } catch(e) {}
-        }
-
-        if (!branchId || !cartId) return [];
-
-        const cartUrl = `/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/carts/${cartId}?appId=${VICTORY_APP_ID}`;
-        const resp = await fetch(cartUrl, {
-            method: 'POST',
-            headers: {
-                ...baseHeaders,
-                'x-http-method-override': 'PATCH'
-            },
-            credentials: 'include',
-            body: JSON.stringify({ lines: [] })
+        const sessionId = localStorage.getItem('cart-session-id');
+        if (!sessionId) return [];
+        const resp = await fetch('https://api.victoryonline.co.il/api/web/cart', {
+            headers: { 'Accept': 'application/json', 'Cart-Session-Id': sessionId }
         });
         if (!resp.ok) return [];
-
-        const data = await resp.json();
-        const lines = data?.cart?.lines || data?.lines || [];
+        const json = await resp.json();
+        if (json?.status !== 'success') return [];
+        const lines = json.data?.items || [];
 
         const products = [];
         lines.forEach(line => {
-            if (line.type !== 1) return;
-            const product = line.product;
-            if (!product) return;
-
-            const barcode = extractBarcode(product);
-            if (!barcode) return;
-
-            const name = product.name || 'מוצר';
-            if (name.includes('משלוח') || name.toLowerCase().includes('delivery') || name.toLowerCase().includes('shipping')) return;
-            const quantity = line.quantity || 1;
-            const finalTotal = extractLinePrice(line);
-
+            const m = String(line.featuredImage || '').match(/\/(?:product-images|gs1)\/(\d+)\//);
+            const quantity = Number(line.quantity) || 1;
+            const total = line.totalPrice != null ? parseFloat(line.totalPrice) : (parseFloat(line.price) || 0) * quantity;
             products.push({
-                code: String(barcode),
-                name: name,
+                code: m ? m[1] : 'victory-' + line.id, // no barcode in the image path: keep the line so it shows as unmatched
+                name: line.name || 'מוצר',
                 quantity: quantity,
-                victory_total: finalTotal
+                victory_total: total
             });
         });
-
         return products;
     } catch(e) {
         console.error('Error scanning Victory cart:', e);
@@ -1027,19 +533,19 @@ function findShufersalDataByRamiLevy(ramiLevyCode, pricesData) {
 }
 
 // ===== RAMI LEVY AGENT (runs inside hidden Rami Levy window) =====
-async function agentInsideCartEngine(itemsList) {
+async function agentInsideCartEngine(itemsList, settingsStoreId) {
     const itemsPayload = {};
     itemsList.forEach(item => {
         if (item.id) itemsPayload[item.id] = parseFloat(item.quantity).toFixed(2);
     });
 
-    let storeId = 1, secretToken = '';
+    let storeId = Number(settingsStoreId) || 331, secretToken = ''; // 331 is the store the site gives a guest
     try {
         const rlStorage = localStorage.getItem('ramilevy') || sessionStorage.getItem('ramilevy');
         if (rlStorage) {
             const parsed = JSON.parse(rlStorage);
             if (parsed.authuser?.user) {
-                storeId = Number(parsed.authuser.user.store_id || 1);
+                storeId = Number(parsed.authuser.user.store_id || storeId);
                 secretToken = parsed.authuser.user.token || '';
             }
         }
@@ -1176,350 +682,65 @@ async function agentShufersalAgent(items) {
 }
 
 // ===== VICTORY AGENT (runs inside hidden Victory window) =====
-async function agentVictoryAgent(items) {
-    const VICTORY_RETAILER_ID = 1470;
-    const VICTORY_APP_ID = 4;
-
-    const VICTORY_SEARCH_FILTERS = encodeURIComponent(JSON.stringify({
-        "must": {
-            "exists": ["family.id","family.categoriesPaths.id","branch.regularPrice"],
-            "term": {"branch.isActive": true, "branch.isVisible": true}
-        },
-        "mustNot": {"term": {"branch.regularPrice": 0}},
-        "bool": {
-            "should": [
-                {"bool": {"must_not": {"exists": {"field": "branch.outOfStockShowUntilDate"}}}},
-                {"bool": {"must": [{"range": {"branch.outOfStockShowUntilDate": {"gt": "now"}}}, {"term": {"branch.isOutOfStock": true}}]}},
-                {"bool": {"must": [{"term": {"branch.isOutOfStock": false}}]}}
-            ]
-        }
-    }));
-
-    let token = '';
-    let branchId = null;
-    let cartId = null;
-    let userId = null;
-
-    for (const key of Object.keys(localStorage)) {
-        try {
-            const raw = localStorage.getItem(key);
-            if (!raw || raw.length < 4) continue;
-
-            if (/^[0-9a-f]{60,}$/.test(raw.trim())) { token = raw.trim(); continue; }
-
-            const p = JSON.parse(raw);
-            if (typeof p !== 'object' || !p) continue;
-
-            const t = p?.token || p?.authToken || p?.access_token || p?.user?.token || p?.accessToken || p?.auth?.token || p?.session?.token;
-            if (t && typeof t === 'string' && t.length > 40) token = t;
-
-            const uid = p?.userId || p?.user?.id || p?.id || p?.data?.userId || p?.session?.userId;
-            if (uid && !userId) userId = uid;
-
-            const bid = p?.branchId || p?.branch?.id || p?.selectedBranch?.id || p?.currentBranch?.id || p?.store?.branchId;
-            if (bid && !branchId) branchId = Number(bid);
-
-            const cid = p?.cartId || p?.serverCartId || p?.cart?.id || p?.currentCart?.id || p?.activeCart?.id;
-            if (cid && !cartId) cartId = cid;
-
-        } catch(e) {}
-    }
-
-    if (!token) {
-        console.warn('[Victory] No token found in localStorage');
-        return { results: [], debug: { token: false, branchId, cartId, userId, noToken: true } };
-    }
-
-    const baseHeaders = {
-        'Accept': 'application/json, text/plain, */*',
-        'Content-Type': 'application/json;charset=UTF-8',
-        'Authorization': 'Bearer ' + token
-    };
-
-    if (!branchId) {
-        const discoveryEndpoints = [
-            `/v2/retailers/${VICTORY_RETAILER_ID}/users/me?appId=${VICTORY_APP_ID}`,
-            `/v2/retailers/${VICTORY_RETAILER_ID}/customers/me?appId=${VICTORY_APP_ID}`,
-            `/v2/retailers/${VICTORY_RETAILER_ID}/users/${userId || 0}/settings?appId=${VICTORY_APP_ID}`,
-        ];
-        for (const ep of discoveryEndpoints) {
-            if (branchId) break;
-            try {
-                const r = await fetch(ep, { headers: baseHeaders, credentials: 'include' });
-                if (!r.ok) continue;
-                const d = await r.json();
-                const bid = d?.branchId || d?.selectedBranchId || d?.branch?.id
-                          || d?.user?.branchId || d?.data?.branchId
-                          || (Array.isArray(d?.branches) && d.branches[0]?.id);
-                if (bid) branchId = Number(bid);
-                const uid = d?.userId || d?.id || d?.user?.id;
-                if (uid && !userId) userId = uid;
-                const cid = d?.cartId || d?.cart?.id || d?.activeCartId;
-                if (cid && !cartId) cartId = cid;
-            } catch(e) {}
-        }
-    }
-
-    if (!cartId && branchId && userId) {
-        try {
-            const ep = `/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/carts?appId=${VICTORY_APP_ID}&userId=${userId}`;
-            const r = await fetch(ep, { headers: baseHeaders, credentials: 'include' });
-            if (r.ok) {
-                const d = await r.json();
-                const cid = d?.cart?.id || d?.id || d?.cartId
-                           || (Array.isArray(d) && d[0]?.id)
-                           || d?.data?.id || d?.data?.cart?.id;
-                if (cid) cartId = Number(cid);
-            }
-        } catch(e) {}
-    }
-
-    if (!cartId && branchId && userId) {
-        try {
-            const r = await fetch(`/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/carts?appId=${VICTORY_APP_ID}`, {
-                method: 'POST',
-                headers: { ...baseHeaders, 'Content-Type': 'application/json;charset=UTF-8' },
-                credentials: 'include',
-                body: JSON.stringify({ deliveryType: 1, source: 'Extension', userId })
-            });
-            if (r.ok) {
-                const d = await r.json();
-                const cid = d?.cart?.id || d?.id || d?.cartId || d?.data?.id || d?.data?.cart?.id;
-                if (cid) cartId = Number(cid);
-            }
-        } catch(e) {}
-    }
-
+// Serialized by executeScript: everything it uses must be defined inside it.
+async function agentVictoryAgent(items, settingsBranchId) {
+    const branchId = String(settingsBranchId || '55');
+    const ALGOLIA_URL = 'https://QF3L7C47QU-dsn.algolia.net/1/indexes/*/queries?x-algolia-api-key=0abb07df3782882c383198f99009782d&x-algolia-application-id=QF3L7C47QU';
+    const norm = v => String(v == null ? '' : v).replace(/^P_/, '').replace(/\D/g, '').replace(/^0+/, '');
     const results = [];
-    const foundIds = new Map();
+    const notFound = [];
+    const debug = { branchId, foundCount: 0, totalItems: items.length, notFound };
 
-    if (branchId) {
-        const searchBase = `/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/products/autocomplete`;
-        for (const item of items) {
-            // Store known ID as fallback but ALWAYS do a live lookup to get current price + verify product
-            const knownRetailerId = item.retailerProductId ? Number(item.retailerProductId) : null;
+    const withBarcode = items.filter(i => norm(i.barcode));
+    items.filter(i => !norm(i.barcode)).forEach(i => notFound.push(i.barcode || i.name || ''));
 
-            let matched = false;
-            for (const q of [item.barcode, item.name]) {
-                if (matched) break;
-                try {
-                    const url = `${searchBase}?appId=${VICTORY_APP_ID}&filters=${VICTORY_SEARCH_FILTERS}&query=${encodeURIComponent(q)}&from=0&size=10&isSearch=true&languageId=1&userId=${userId}`;
-                    const resp = await fetch(url, { headers: baseHeaders, credentials: 'include' });
-                    if (!resp.ok) continue;
-                    const data = await resp.json();
-
-                    const products = data?.suggestions?.suggestProducts?.products || [];
-                    const match = products.find(p =>
-                        String(p.barcode) === String(item.barcode) ||
-                        String(p.localBarcode) === String(item.barcode)
-                    );
-
-                    if (match?.id) {
-                        const outOfStock = match.branch?.isOutOfStock === true;
-                        const rid = Number(match.id);
-                        const basePrice = parseFloat(match.branch?.salePrice ?? match.branch?.regularPrice ?? match.branch?.price ?? 0);
-                        let finalTotal = basePrice * item.quantity;
-
-                        const specials = match.branch?.specials || [];
-                        if (specials.length > 0) {
-                            for (const special of specials) {
-                                const reqQty = special.firstLevel?.firstPurchaseTotal;
-                                const promoPrice = special.firstLevel?.firstGift?.total ?? special.firstLevel?.total;
-
-                                if (reqQty && promoPrice && item.quantity >= reqQty) {
-                                    const promoCount = Math.floor(item.quantity / reqQty);
-                                    const remainder = item.quantity % reqQty;
-                                    const calculatedPromoTotal = (promoCount * promoPrice) + (remainder * basePrice);
-                                    if (calculatedPromoTotal < finalTotal) {
-                                        finalTotal = calculatedPromoTotal;
-                                    }
-                                }
-                            }
-                        }
-
-                        foundIds.set(item.barcode, {
-                            retailerProductId: rid,
-                            price: outOfStock ? 0 : basePrice,
-                            quantity: item.quantity,
-                            outOfStock
-                        });
-
-                        if (basePrice > 0 && !outOfStock) {
-                            results.push({
-                                barcode: item.barcode,
-                                finalTotal: finalTotal,
-                                quantity: item.quantity,
-                                outOfStock: false,
-                                retailerProductId: rid
-                            });
-                        }
-                        matched = true;
-                    }
-                } catch(e) {}
-            }
-            // Fallback: if live search found nothing but we have a stored ID, use it
-            if (!matched && knownRetailerId) {
-                foundIds.set(item.barcode, { retailerProductId: knownRetailerId, price: 0, quantity: item.quantity, outOfStock: false });
-            }
-        }
-    }
-
-    if (cartId && branchId) {
-        const cartUrl = `/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/carts/${cartId}?appId=${VICTORY_APP_ID}`;
-
-        const allForCart = new Map();
-        foundIds.forEach((info, barcode) => {
-            allForCart.set(info.retailerProductId, { barcode, quantity: info.quantity });
-        });
-        items.forEach(i => {
-            if (i.retailerProductId && !foundIds.has(i.barcode)) {
-                allForCart.set(Number(i.retailerProductId), { barcode: i.barcode, quantity: i.quantity });
-            }
-        });
-
-        const cartLines = Array.from(allForCart.entries()).map(([rid, info]) => ({
-            quantity: Number(info.quantity),
-            soldBy: null,
-            retailerProductId: rid,
-            type: 1
-        }));
-
-        function extractLinePrice(line) {
-            const qty = line.quantity || 1;
-            const lwt = line.lineWithTax != null ? parseFloat(line.lineWithTax) : null;
-            const ap = line.actualPrice != null ? parseFloat(line.actualPrice) * qty : null;
-            const orig = line.originalTotalPrice != null ? parseFloat(line.originalTotalPrice) : null;
-            const base = line.price != null ? parseFloat(line.price) * qty : null;
-            const prices = [lwt, ap, orig, base].filter(p => p != null && p > 0);
-            let minPrice = prices.length > 0 ? Math.min(...prices) : 0;
-
-            // Fallback base price from product object
-            const prodRegPrice = line.product?.branch?.regularPrice != null ? parseFloat(line.product.branch.regularPrice) : null;
-            const prodSalePrice = line.product?.branch?.salePrice != null ? parseFloat(line.product.branch.salePrice) : null;
-            const prodPrice = line.product?.price != null ? parseFloat(line.product.price) : null;
-            const basePrice = prodSalePrice ?? prodRegPrice ?? prodPrice ?? (line.price != null ? parseFloat(line.price) : 0);
-            
-            if (minPrice === 0 && basePrice > 0) {
-                minPrice = basePrice * qty;
-            }
-
-            // Apply branch specials if available
-            const specials = line.product?.branch?.specials || line.product?.specials || [];
-            if (specials.length > 0 && basePrice > 0) {
-                for (const special of specials) {
-                    const reqQty = special.firstLevel?.firstPurchaseTotal;
-                    const promoPrice = special.firstLevel?.firstGift?.total ?? special.firstLevel?.total;
-
-                    if (reqQty && promoPrice && qty >= reqQty) {
-                        const promoCount = Math.floor(qty / reqQty);
-                        const remainder = qty % reqQty;
-                        const calculatedPromoTotal = (promoCount * promoPrice) + (remainder * basePrice);
-                        if (minPrice === 0 || calculatedPromoTotal < minPrice) {
-                            minPrice = calculatedPromoTotal;
-                        }
-                    }
-                }
-            }
-
-            return minPrice;
-        }
-
-        function processCartLines(lineList) {
-            lineList.forEach(line => {
-                if (line.type !== 1) return;
-                const rid = Number(line.retailerProductId);
-                const info = allForCart.get(rid);
-                if (!info) return;
-                const isOutOfStock = line.product?.branch?.isOutOfStock === true;
-                const finalPrice = extractLinePrice(line);
-                const existIdx = results.findIndex(r => r.barcode === info.barcode);
-                let bestPrice = finalPrice;
-
-                if (existIdx >= 0) {
-                    if (results[existIdx].finalTotal > 0 && results[existIdx].finalTotal < bestPrice) {
-                        bestPrice = results[existIdx].finalTotal;
-                    }
-                    results.splice(existIdx, 1);
-                }
-
-                results.push({
-                    barcode: info.barcode,
-                    finalTotal: isOutOfStock ? 0 : bestPrice,
-                    quantity: line.quantity || info.quantity,
-                    outOfStock: isOutOfStock,
-                    retailerProductId: rid
-                });
-            });
-        }
-
-                const processedByGet = new Set();
+    for (let start = 0; start < withBarcode.length; start += 20) {
+        const batch = withBarcode.slice(start, start + 20);
+        let data = null;
         try {
-            const getResp = await fetch(cartUrl, {
+            const resp = await fetch(ALGOLIA_URL, {
                 method: 'POST',
-                headers: {
-                    ...baseHeaders,
-                    'x-http-method-override': 'PATCH'
-                },
-                credentials: 'include',
-                body: JSON.stringify({ lines: [] })
+                body: JSON.stringify({ requests: batch.map(i => ({
+                    indexName: 'products', query: norm(i.barcode), hitsPerPage: 6, page: 0,
+                    facetFilters: [[`inStockBranches:${branchId}`]], relevancyStrictness: 0
+                })) })
             });
-            if (getResp.ok) {
-                const getData = await getResp.json();
-                const existingLines = getData?.cart?.lines || getData?.lines || [];
-
-                existingLines.forEach(line => {
-                    if (line.type !== 1) return;
-                    const rid = Number(line.retailerProductId);
-                    const info = allForCart.get(rid);
-                    if (!info || line.quantity !== info.quantity) return;
-                    const isOutOfStock = line.product?.branch?.isOutOfStock === true;
-                    const finalPrice = extractLinePrice(line);
-                    const existIdx = results.findIndex(r => r.barcode === info.barcode);
-                    let bestPrice = finalPrice;
-
-                    if (existIdx >= 0) {
-                        if (results[existIdx].finalTotal > 0 && results[existIdx].finalTotal < bestPrice) {
-                            bestPrice = results[existIdx].finalTotal;
-                        }
-                        results.splice(existIdx, 1);
-                    }
-
-                    results.push({
-                        barcode: info.barcode,
-                        finalTotal: isOutOfStock ? 0 : bestPrice,
-                        quantity: line.quantity,
-                        outOfStock: isOutOfStock,
-                        retailerProductId: rid
-                    });
-                    processedByGet.add(rid);
-                });
-            }
-        } catch(e) {}
-
-        const uncoveredLines = cartLines.filter(l => !processedByGet.has(l.retailerProductId));
-        if (uncoveredLines.length > 0) {
-            try {
-                const resp = await fetch(cartUrl, {
-                    method: 'POST',
-                    headers: { ...baseHeaders, 'x-http-method-override': 'PATCH' },
-                    credentials: 'include',
-                    body: JSON.stringify({ lines: cartLines, deliveryType: 1, source: 'Extension' })
-                });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    const patchLines = (data?.cart?.lines || data?.lines || [])
-                        .filter(l => !processedByGet.has(Number(l.retailerProductId)));
-                    processCartLines(patchLines);
-                }
-            } catch(e) {}
+            if (resp.status === 429) { debug.blocked = true; debug.reason = 'HTTP 429'; break; }
+            if (!resp.ok) { debug.reason = 'HTTP ' + resp.status; batch.forEach(i => notFound.push(i.barcode)); continue; }
+            data = await resp.json();
+        } catch (e) {
+            debug.reason = 'network error';
+            batch.forEach(i => notFound.push(i.barcode));
+            continue;
         }
+        if (data && data.captchaAction) { debug.blocked = true; debug.reason = 'captchaAction'; break; }
+
+        batch.forEach((item, idx) => {
+            const hits = data?.results?.[idx]?.hits || [];
+            const want = norm(item.barcode);
+            const hit = hits.find(h => h && norm(h.sku) === want);
+            if (!hit) { notFound.push(item.barcode); return; }
+            const price = parseFloat(hit.price) || 0;
+            const outOfStock = hit.inStock === false || price <= 0;
+            const qty = Number(item.quantity) || 1;
+            debug.foundCount++;
+            results.push({
+                barcode: item.barcode,
+                finalTotal: outOfStock ? 0 : price * qty,
+                quantity: item.quantity,
+                outOfStock,
+                retailerProductId: String(hit.id),
+                name: hit.name,
+                isWeight: !!hit.isWeight
+            });
+        });
     }
 
-    return { results, debug: { token: !!token, branchId, cartId, userId, foundCount: foundIds.size, totalItems: items.length } };
+    return { results, debug };
 }
 
 // ===== MACHSANEI HASHUK AGENT (runs inside hidden MCK window) =====
-async function agentMCKAgent(items) {
+async function agentMCKAgent(items, settingsBranchId) {
     const MCK_RETAILER_ID = 1107;
     const MCK_APP_ID = 4;
 
@@ -1561,16 +782,13 @@ async function agentMCKAgent(items) {
         } catch(e) {}
     }
 
-    if (!token) {
-        console.warn('[MCK] No token found in localStorage');
-        return { results: [], debug: { token: false, branchId, cartId, userId, noToken: true } };
-    }
-
+    // No token: still try the public catalog, without Authorization
+    let authBlocked = false;
     const baseHeaders = {
         'Accept': 'application/json, text/plain, */*',
-        'Content-Type': 'application/json;charset=UTF-8',
-        'Authorization': 'Bearer ' + token
+        'Content-Type': 'application/json;charset=UTF-8'
     };
+    if (token) baseHeaders['Authorization'] = 'Bearer ' + token;
 
     if (!branchId) {
         const discoveryEndpoints = [
@@ -1626,20 +844,25 @@ async function agentMCKAgent(items) {
         } catch(e) {}
     }
 
+    if (!branchId && settingsBranchId) branchId = Number(settingsBranchId);
+
     const results = [];
     const foundIds = new Map();
 
     if (branchId) {
         const searchBase = `/v2/retailers/${MCK_RETAILER_ID}/branches/${branchId}/products/autocomplete`;
         for (const item of items) {
+            if (authBlocked) break;
             const knownRetailerId = item.retailerProductId ? Number(item.retailerProductId) : null;
 
             let matched = false;
             for (const q of [item.barcode, item.name]) {
-                if (matched) break;
+                if (matched || authBlocked) break;
                 try {
                     const url = `${searchBase}?appId=${MCK_APP_ID}&filters=${MCK_SEARCH_FILTERS}&query=${encodeURIComponent(q)}&from=0&size=10&isSearch=true&languageId=1&userId=${userId}`;
                     const resp = await fetch(url, { headers: baseHeaders, credentials: 'include' });
+                    // 401/403/429 or an HTML bot-check page: stop calling this chain
+                    if ([401, 403, 429].includes(resp.status) || !(resp.headers.get('content-type') || '').includes('json')) { authBlocked = true; break; }
                     if (!resp.ok) continue;
                     const data = await resp.json();
 
@@ -1849,31 +1072,11 @@ async function agentMCKAgent(items) {
         }
     }
 
-    return { results, debug: { token: !!token, branchId, cartId, userId, foundCount: foundIds.size, totalItems: items.length } };
+    if (authBlocked && results.length === 0) return { results: [], debug: { needsLogin: true, branchId } };
+    return { results, debug: { token: !!token, branchId, cartId, userId, foundCount: foundIds.size, totalItems: items.length, needsLogin: !token && !branchId } };
 }
 
 // ===== RAMI LEVY CATALOG SEARCH =====
-async function searchRamiLevyCatalog(query, excludeCode = null) {
-    try {
-        const resp = await fetch('https://www.rami-levy.co.il/api/catalog', {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json, text/plain, */*',
-                'Content-Type': 'application/json;charset=UTF-8',
-                'Referer': 'https://www.rami-levy.co.il/he'
-            },
-            body: JSON.stringify({ q: query, store: 331 })
-        });
-        if (resp.ok) {
-            const data = await resp.json();
-            if (data.data?.length > 0) {
-                const product = data.data.find(p => String(p.id) !== excludeCode);
-                if (product) return { code: String(product.id), name: product.name, price: product.price?.price || 0 };
-            }
-        }
-    } catch(e) {}
-    return null;
-}
 
 async function initSettings() {
     let currentUrl = '';
@@ -1887,6 +1090,12 @@ async function initSettings() {
     const activeStore = detectActiveStore(currentUrl);
     const settings = await loadSettings();
 
+    const storeNames = { shufersal: 'שופרסל', ramiLevy: 'רמי לוי', victory: 'ויקטורי', machsaneiHashuk: 'מחסני השוק' };
+    const onStoreSite = /shufersal\.co\.il|rami-levy\.co\.il|victory|mck\.co\.il/.test(currentUrl);
+    document.getElementById('startHeadline').textContent = onStoreSite
+        ? `זיהינו עגלה ב${storeNames[activeStore]}`
+        : 'פתחו את העגלה באתר של אחת הרשתות';
+
     // Check if any branches are missing
     const isMissingSettings = 
         !settings.userSettings?.shufersal?.branchId || 
@@ -1896,7 +1105,7 @@ async function initSettings() {
     if (isMissingSettings && !document.getElementById('missingSettingsWarn')) {
         const warning = document.createElement('div');
         warning.id = 'missingSettingsWarn';
-        warning.innerHTML = '⚠️ להשוואה מדויקת, <a href="#" style="color:#856404; text-decoration:underline;">הגדר את הסניפים שלך</a>';
+        warning.innerHTML = 'להשוואה מדויקת, <a href="#" style="color:#856404; text-decoration:underline;">הגדר את הסניפים שלך</a>';
         warning.style = 'background: #fff3cd; color: #856404; padding: 10px; text-align: center; font-size: 13px; font-weight: bold; cursor: pointer; border-bottom: 1px solid #ffeeba;';
         warning.onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
         const storePanel = document.getElementById('storePanel');
@@ -1978,6 +1187,7 @@ async function compareCarts() {
 
     statusDiv.innerHTML = '';
     resultDiv.innerHTML = '';
+    document.getElementById('startView').hidden = false;
     finalCartToTransfer = [];
     compareBtn.disabled = true;
 
@@ -2036,7 +1246,7 @@ async function compareCarts() {
         }
 
         if (!rawCartItems || rawCartItems.length === 0) {
-            statusDiv.innerHTML = '❌ לא מצאתי מוצרים בעגלה.';
+            statusDiv.innerHTML = 'לא מצאתי מוצרים בעגלה.';
             compareBtn.disabled = false;
             return;
         }
@@ -2045,15 +1255,7 @@ async function compareCarts() {
         const codes = rawCartItems.map(item => item.code);
 
         let headers = null;
-        if (!SUPABASE_ANON_KEY) {
-            statusDiv.innerHTML = '🔌 עובד במצב מקומי (קובץ מחירים)...';
-            try {
-                const res = await fetch(chrome.runtime.getURL('prices.json'));
-                pricesData = await res.json();
-            } catch (err) {
-                console.error("שגיאה בטעינת קובץ נתונים מקומי:", err);
-            }
-        } else {
+        {
             statusDiv.innerHTML = 'טוען נתונים מ-Supabase...';
             pricesData = {};
             headers = {
@@ -2076,7 +1278,7 @@ async function compareCarts() {
                     }
                 });
                 const queryParams = new URLSearchParams({
-                    select: 'barcode,name,store_products(store_name,store_code,price),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2)',
+                    select: 'barcode,name,store_products(store_name,store_code,price,updated_at),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2)',
                     barcode: `in.(${barcodesList.join(',')})`
                 });
                 try {
@@ -2100,6 +1302,7 @@ async function compareCarts() {
                             p.store_products.forEach(sp => {
                                 itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
                                 itemData[`${sp.store_name}_code`] = sp.store_code;
+                                itemData[`${sp.store_name}_updated_at`] = sp.updated_at || null;
                                 if (sp.store_name === 'victory') {
                                     itemData.victory_retailer_id = sp.store_code;
                                 }
@@ -2123,7 +1326,7 @@ async function compareCarts() {
                     }
                 });
                 const queryParams = new URLSearchParams({
-                    select: 'store_code,products(barcode,name,store_products(store_name,store_code,price),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2))',
+                    select: 'store_code,products(barcode,name,store_products(store_name,store_code,price,updated_at),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2))',
                     store_name: 'eq.rami_levy',
                     store_code: `in.(${dbQueryCodes.join(',')})`
                 });
@@ -2151,6 +1354,7 @@ async function compareCarts() {
                             p.store_products.forEach(innerSp => {
                                 itemData[`${innerSp.store_name}_price`] = innerSp.price != null ? parseFloat(innerSp.price) : null;
                                 itemData[`${innerSp.store_name}_code`] = innerSp.store_code;
+                                itemData[`${innerSp.store_name}_updated_at`] = innerSp.updated_at || null;
                                 if (innerSp.store_name === 'victory') {
                                     itemData.victory_retailer_id = innerSp.store_code;
                                 }
@@ -2165,7 +1369,7 @@ async function compareCarts() {
             } else if (activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
                 const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
                 const queryParams = new URLSearchParams({
-                    select: 'barcode,name,store_products(store_name,store_code,price),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2)',
+                    select: 'barcode,name,store_products(store_name,store_code,price,updated_at),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2)',
                     barcode: `in.(${barcodesList.join(',')})`
                 });
                 try {
@@ -2186,6 +1390,7 @@ async function compareCarts() {
                             p.store_products.forEach(sp => {
                                 itemData[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
                                 itemData[`${sp.store_name}_code`] = sp.store_code;
+                                itemData[`${sp.store_name}_updated_at`] = sp.updated_at || null;
                                 if (sp.store_name === 'victory') {
                                     itemData.victory_retailer_id = sp.store_code;
                                 }
@@ -2208,7 +1413,7 @@ async function compareCarts() {
                 });
             }
         });
-        if (SUPABASE_ANON_KEY && substituteBarcodes.length > 0) {
+        if (substituteBarcodes.length > 0) {
             statusDiv.innerHTML = 'טוען פרטי מוצרים תחליפיים...';
             const uniqueSubs = Array.from(new Set(substituteBarcodes));
             await fetchSubstituteDetails(uniqueSubs, headers);
@@ -2263,6 +1468,7 @@ async function compareCarts() {
                     victory_retailer_id: dbItem.victory_retailer_id || null,
                     victory_price_unit: dbItem.victory_price != null ? dbItem.victory_price : null,
                     mck_price_unit: dbItem.machsanei_hashuk_price != null ? dbItem.machsanei_hashuk_price : null,
+                    mck_updated_at: dbItem.machsanei_hashuk_updated_at || null,
                     rl_live_total: rl_live_total,
                     v_live_total: v_live_total,
                     mck_live_total: mck_live_total,
@@ -2371,7 +1577,7 @@ async function compareCarts() {
         if (activeStore !== 'ramiLevy' && compareRamiLevy && itemsForRamiLevy.length > 0) {
             statusDiv.innerHTML = 'בודק מחירים ברמי לוי...';
             try {
-                ramiLevyResults = await fetchInHiddenWindow('https://www.rami-levy.co.il/he', agentInsideCartEngine, [itemsForRamiLevy], 2500) || [];
+                ramiLevyResults = await fetchInHiddenWindow('https://www.rami-levy.co.il/he', agentInsideCartEngine, [itemsForRamiLevy, settings.userSettings?.ramiLevy?.branchId || null], 2500) || [];
             } catch(e) {}
         }
 
@@ -2381,7 +1587,7 @@ async function compareCarts() {
         if (activeStore !== 'victory' && compareVictory && itemsForVictory.length > 0) {
             statusDiv.innerHTML = 'בודק מחירים בויקטורי...';
             try {
-                const agentResponse = await fetchInHiddenWindow('https://www.victoryonline.co.il', agentVictoryAgent, [itemsForVictory], 3500);
+                const agentResponse = await fetchInHiddenWindow('https://www.victoryonline.co.il', agentVictoryAgent, [itemsForVictory, (settings.userSettings?.victory?.platform === 2 && settings.userSettings.victory.branchId) || null], 3500);
                 if (agentResponse?.results) {
                     victoryResults = agentResponse.results;
                     agentDebug = agentResponse.debug || null;
@@ -2395,7 +1601,7 @@ async function compareCarts() {
         if (activeStore !== 'machsaneiHashuk' && compareMCK && itemsForMCK.length > 0) {
             statusDiv.innerHTML = 'בודק מחירים במחסני השוק...';
             try {
-                const mckResponse = await fetchInHiddenWindow('https://www.mck.co.il', agentMCKAgent, [itemsForMCK], 3500);
+                const mckResponse = await fetchInHiddenWindow('https://www.mck.co.il', agentMCKAgent, [itemsForMCK, settings.userSettings?.machsaneiHashuk?.branchId || null], 3500);
                 if (mckResponse?.results) {
                     mckResults = mckResponse.results;
                     mckDebug = mckResponse.debug || null;
@@ -2443,19 +1649,6 @@ async function compareCarts() {
                             }
                         }
                     }
-                    if (!foundSub && shufersalLive && shufersalLive.outOfStock && GEMINI_API_KEY) {
-                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} בשופרסל...`;
-                        const candidates = await searchStoreForCandidates(item.name, 'shufersal', barcode);
-                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'שופרסל');
-                        if (chosen) {
-                            shufersalTotal = chosen.price * item.quantity;
-                            shufersalSource = 'ai-substitute';
-                            chosenShufersalBarcode = chosen.code;
-                            shufersalSubName = chosen.name;
-                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'shufersal') || chosen.code;
-                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
-                        }
-                    }
                     if (!shufersalTotal) {
                         if (shufersalLive && shufersalLive.outOfStock) {
                             shufersalTotal = null;
@@ -2498,19 +1691,6 @@ async function compareCarts() {
                             }
                         }
                     }
-                    if (!foundSub && ramiLive && ramiLive.outOfStock && GEMINI_API_KEY) {
-                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} ברמי לוי...`;
-                        const candidates = await searchStoreForCandidates(item.name, 'rami_levy', item.backup_target_code);
-                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'רמי לוי');
-                        if (chosen) {
-                            ramiTotal = chosen.price * item.quantity;
-                            ramiSource = 'ai-substitute';
-                            chosenRamiCode = chosen.code;
-                            ramiSubName = chosen.name;
-                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'rami_levy') || chosen.code;
-                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
-                        }
-                    }
                     if (!ramiTotal) {
                         if (ramiLive && ramiLive.outOfStock) {
                             ramiTotal = null;
@@ -2523,7 +1703,8 @@ async function compareCarts() {
             }
 
             // Victory
-            let chosenVictoryCode = item.victory_code || item.victory_retailer_id;
+            // DB victory codes are old Stor.ai ids: only a live match gives a usable new-platform id
+            let chosenVictoryCode = null;
             let victoryTotal = null;
             let victorySource = 'database';
             let victorySubName = null;
@@ -2535,36 +1716,24 @@ async function compareCarts() {
                 if (victoryLive && !victoryLive.outOfStock) {
                     victoryTotal = victoryLive.finalTotal;
                     victorySource = 'live';
+                    chosenVictoryCode = victoryLive.retailerProductId || null;
                 } else {
                     let foundSub = false;
                     if (item.substitutes && item.substitutes.length > 0) {
                         for (const subBarcode of item.substitutes) {
                             const subItem = pricesData[subBarcode] || pricesData[subBarcode.startsWith('P_') ? subBarcode : `P_${subBarcode}`];
-                            if (subItem && (subItem.victory_code || subItem.victory_retailer_id)) {
+                            if (subItem) {
                                 const cleanSub = subBarcode.replace('P_', '');
                                 const subLive = victoryResults.find(r => r.barcode === cleanSub);
                                 if (subLive && !subLive.outOfStock) {
                                     victoryTotal = subLive.finalTotal;
                                     victorySource = 'live-substitute';
-                                    chosenVictoryCode = subItem.victory_code || subItem.victory_retailer_id;
+                                    chosenVictoryCode = subLive.retailerProductId || null;
                                     foundSub = true;
                                     victorySubName = subItem.name;
                                     break;
                                 }
                             }
-                        }
-                    }
-                    if (!foundSub && victoryLive && victoryLive.outOfStock && GEMINI_API_KEY) {
-                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} בויקטורי...`;
-                        const candidates = await searchStoreForCandidates(item.name, 'victory', chosenVictoryCode);
-                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'ויקטורי');
-                        if (chosen) {
-                            victoryTotal = chosen.price * item.quantity;
-                            victorySource = 'ai-substitute';
-                            chosenVictoryCode = chosen.code;
-                            victorySubName = chosen.name;
-                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'victory') || chosen.code;
-                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
                         }
                     }
                     if (!victoryTotal) {
@@ -2592,6 +1761,7 @@ async function compareCarts() {
                 if (mckLive && !mckLive.outOfStock) {
                     mckTotal = mckLive.finalTotal;
                     mckSource = 'live';
+                    chosenMCKCode = mckLive.retailerProductId || null; // without it the "build cart" button sends an empty cart
                 } else {
                     let foundSub = false;
                     if (item.substitutes && item.substitutes.length > 0) {
@@ -2609,19 +1779,6 @@ async function compareCarts() {
                                     break;
                                 }
                             }
-                        }
-                    }
-                    if (!foundSub && mckLive && mckLive.outOfStock && GEMINI_API_KEY) {
-                        statusDiv.innerHTML = `מחפש תחליף AI ל-${item.name} במחסני השוק...`;
-                        const candidates = await searchStoreForCandidates(item.name, 'machsaneiHashuk', chosenMCKCode);
-                        const chosen = await askGeminiForSubstitute(item.name, candidates, 'מחסני השוק');
-                        if (chosen) {
-                            mckTotal = chosen.price * item.quantity;
-                            mckSource = 'ai-substitute';
-                            chosenMCKCode = chosen.code;
-                            mckSubName = chosen.name;
-                            const resolvedBarcode = resolveStoreCodeToBarcode(chosen.code, 'machsaneiHashuk') || chosen.code;
-                            await saveSubstituteToSupabase(item.shufersal_code, resolvedBarcode, headers);
                         }
                     }
                     if (!mckTotal) {
@@ -2664,7 +1821,8 @@ async function compareCarts() {
                 shufersal_sub_name: shufersalSubName,
                 rami_sub_name: ramiSubName,
                 victory_sub_name: victorySubName,
-                mck_sub_name: mckSubName
+                mck_sub_name: mckSubName,
+                mck_updated_at: item.mck_updated_at
             };
 
             const isMissingEverywhere = (!compareShufersal || isShufersalMissing) &&
@@ -2802,7 +1960,7 @@ async function compareCarts() {
                     key: 'victory', name: victoryDisplayName, total: totalVictory,
                     info: victoryInfo,
                     hasData: isVictoryActive ? true : (victoryCount > 0),
-                    debugInfo: isVictoryActive ? null : (victoryResults.length === 0 ? (agentDebug?.noToken ? 'לא מחובר לויקטורי' : (agentDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף')) : null)
+                    debugInfo: isVictoryActive ? null : (victoryResults.length === 0 ? (agentDebug?.blocked ? 'ויקטורי חסמה זמנית את הבדיקה' : 'מחירים לא נמצאו') : null)
                 });
             }
 
@@ -2812,11 +1970,17 @@ async function compareCarts() {
                 const mckInfo = isMCKActive 
                     ? 'הסופר הנוכחי שלך' 
                     : (mckCount === rawCartItems.length ? mckComment : `${mckComment} (${mckCount}/${rawCartItems.length} מוצרים)`);
+                const mckNeedsLogin = !isMCKActive && mckDebug?.needsLogin;
+                const mckLoginHint = 'התחברו לאתר מחסני השוק לקבלת מחיר עדכני';
+                const mckOldDates = [...inStockItems, ...outOfStockItems]
+                    .filter(i => i.mck_price_source === 'database' && i.mck_total > 0 && i.mck_updated_at)
+                    .map(i => new Date(i.mck_updated_at)).filter(d => !isNaN(d));
+                const mckOldDate = mckOldDates.length ? new Date(Math.max(...mckOldDates)).toLocaleDateString('he-IL') : '';
                 storesWithData.push({
                     key: 'machsaneiHashuk', name: 'מחסני השוק', total: totalMCK,
-                    info: mckInfo,
+                    info: mckNeedsLogin ? esc(`מחיר ישן${mckOldDate ? ` (${mckOldDate})` : ''} · ${mckLoginHint}`) : mckInfo,
                     hasData: isMCKActive ? true : (mckCount > 0),
-                    debugInfo: isMCKActive ? null : (mckResults.length === 0 ? (mckDebug?.noToken ? 'לא מחובר למחסני השוק' : (mckDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף')) : null)
+                    debugInfo: isMCKActive ? null : (mckNeedsLogin ? mckLoginHint : (mckResults.length === 0 ? (mckDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף') : null))
                 });
             }
 
@@ -2825,74 +1989,17 @@ async function compareCarts() {
             const orderedStores = [...sortable, ...noData];
             const cheapest = sortable[0];
 
-            let html = `
-            <div class="live-header">
-                <div class="live-badge"><div class="live-dot"></div>השוואה חיה</div>
-                <div class="comparison-title">אופטימיזציית עגלה</div>
-                <div class="comparison-subtitle">ניתחנו ${rawCartItems.length} פריטים ברשתות שבחרת</div>
-            </div>`;
-
-            orderedStores.forEach((store) => {
-                const isCheapest = store.hasData && sortable[0]?.key === store.key;
-                const cheapestRef = sortable.find(s => s.key === activeStore) || sortable[0];
-                const diff = (cheapestRef && store.hasData) ? store.total - cheapestRef.total : 0;
-                const savingFromActive = cheapestRef.total - store.total;
-
-                let diffHtml;
-                if (!store.hasData) {
-                    diffHtml = `<span class="price-diff same" style="background:#f3f4f6; color:#9ca3af">${store.debugInfo || 'ממתין לנתונים...'}</span>`;
-                } else if (isCheapest && store.key !== activeStore && savingFromActive > 0.01) {
-                    diffHtml = `<span class="price-diff saved">חסכת ${formatPrice(savingFromActive)}</span>`;
-                } else if (isCheapest) {
-                    diffHtml = `<span class="price-diff same">הכי זול!</span>`;
-                } else {
-                    diffHtml = `<span class="price-diff extra">+${formatPrice(diff)}</span>`;
-                }
-
-                let btnHtml = '';
-                if (store.key === activeStore) {
-                    btnHtml = `<button class="store-btn ghost">סופר נוכחי</button>`;
-                } else if (store.key === 'ramiLevy') {
-                    btnHtml = `<button class="store-btn dark" id="switchToRamiLevy">עבור לרמי לוי</button>`;
-                } else if (store.key === 'victory') {
-                    btnHtml = `<button class="store-btn blue" id="switchToVictory">${store.hasData ? 'עבור לויקטורי' : 'בחר ויקטורי'}</button>`;
-                } else if (store.key === 'machsaneiHashuk') {
-                    btnHtml = `<button class="store-btn orange" id="switchToMCK">${store.hasData ? 'עבור למחסני השוק' : 'בחר מחסני השוק'}</button>`;
-                } else if (store.key === 'shufersal') {
-                    btnHtml = `<button class="store-btn" style="background:#e8132b; color:white; border-color:#e8132b;" id="switchToShufersal">עבור לשופרסל</button>`;
-                }
-
-                const priceDisplay = store.hasData
-                    ? `<div class="store-price"><span class="store-price-sym">₪</span>${store.total.toFixed(2)}</div>`
-                    : `<div style="font-size:13px; color:#9ca3af; margin-top:4px;">לא זמין</div>`;
-
-                html += `
-                <div class="store-card ${isCheapest ? 'cheapest' : ''}">
-                    ${isCheapest ? '<div class="cheapest-badge">הכי זול</div>' : ''}
-                    <div class="store-top-row">
-                        <div>
-                            <div class="store-name">${store.name}</div>
-                            ${isCheapest && store.key !== activeStore ? '<div class="guarantee-badge">✓ מחיר מובטח</div>' : ''}
-                        </div>
-                        <div class="store-price-block">${priceDisplay}</div>
-                    </div>
-                    <div class="store-bottom-row">
-                        <div class="store-info">${store.info}</div>
-                        ${diffHtml}
-                    </div>
-                    ${btnHtml}
-                </div>`;
-            });
+            let html = renderStoreSummary({ orderedStores, sortable, activeStore, itemCount: rawCartItems.length });
 
             // Split inStockItems into available (no replacements) and replaced (replacements in at least one store)
             const availableItems = [];
             const replacedItems = [];
             inStockItems.forEach(item => {
                 const isReplacedInAny = 
-                    ((activeStore === 'shufersal' || compareShufersal) && (item.shufersal_price_source === 'live-substitute' || item.shufersal_price_source === 'ai-substitute')) ||
-                    (compareRamiLevy && (item.rami_price_source === 'live-substitute' || item.rami_price_source === 'ai-substitute')) ||
-                    (compareVictory && (item.victory_price_source === 'live-substitute' || item.victory_price_source === 'ai-substitute')) ||
-                    (compareMCK && (item.mck_price_source === 'live-substitute' || item.mck_price_source === 'ai-substitute'));
+                    ((activeStore === 'shufersal' || compareShufersal) && (item.shufersal_price_source === 'live-substitute')) ||
+                    (compareRamiLevy && (item.rami_price_source === 'live-substitute')) ||
+                    (compareVictory && (item.victory_price_source === 'live-substitute')) ||
+                    (compareMCK && (item.mck_price_source === 'live-substitute'));
                 
                 if (isReplacedInAny) {
                     replacedItems.push(item);
@@ -2918,7 +2025,7 @@ async function compareCarts() {
                     const mText = (compareMCK) ? `<span class="p-mck">${(item.mck_total && item.mck_total > 0) ? formatPrice(item.mck_total) : '-'}</span>` : '';
                     html += `
                     <div class="product-item">
-                        <span class="product-name">${item.name} x${item.quantity}</span>
+                        <span class="product-name">${esc(item.name)} x${esc(item.quantity)}</span>
                         <div class="product-prices">
                             ${sText}
                             ${rText}${vText}${mText}
@@ -2931,34 +2038,34 @@ async function compareCarts() {
             if (replacedItems.length > 0) {
                 html += '<div class="section-label">מוצרים שהוחלפו</div><div class="product-list">';
                 replacedItems.forEach(item => {
-                    const sIsSub = (item.shufersal_price_source === 'live-substitute' || item.shufersal_price_source === 'ai-substitute');
-                    const sSubBadge = sIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const sIsSub = (item.shufersal_price_source === 'live-substitute');
+                    const sSubBadge = sIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">תחליף</span>' : '';
                     const sText = (activeStore === 'shufersal' || compareShufersal) ? `<span class="p-shufersal">${(item.shufersal_total && item.shufersal_total > 0) ? formatPrice(item.shufersal_total) + sSubBadge : '-'}</span>` : '';
                     
-                    const rIsSub = (item.rami_price_source === 'live-substitute' || item.rami_price_source === 'ai-substitute');
-                    const rSubBadge = rIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const rIsSub = (item.rami_price_source === 'live-substitute');
+                    const rSubBadge = rIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">תחליף</span>' : '';
                     const rText = (compareRamiLevy) ? `<span class="p-rami">${(item.rami_levy_total && item.rami_levy_total > 0) ? formatPrice(item.rami_levy_total) + rSubBadge : '-'}</span>` : '';
                     
-                    const vIsSub = (item.victory_price_source === 'live-substitute' || item.victory_price_source === 'ai-substitute');
-                    const vSubBadge = vIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const vIsSub = (item.victory_price_source === 'live-substitute');
+                    const vSubBadge = vIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">תחליף</span>' : '';
                     const vText = (compareVictory) ? `<span class="p-victory">${(item.victory_total && item.victory_total > 0) ? formatPrice(item.victory_total) + vSubBadge : '-'}</span>` : '';
                     
-                    const mIsSub = (item.mck_price_source === 'live-substitute' || item.mck_price_source === 'ai-substitute');
-                    const mSubBadge = mIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">🔄</span>' : '';
+                    const mIsSub = (item.mck_price_source === 'live-substitute');
+                    const mSubBadge = mIsSub ? '<span title="הוחלף בתחליף" style="font-size: 10px; color: #f59e0b; margin-left: 2px;">תחליף</span>' : '';
                     const mText = (compareMCK) ? `<span class="p-mck">${(item.mck_total && item.mck_total > 0) ? formatPrice(item.mck_total) + mSubBadge : '-'}</span>` : '';
                     
                     const replacementsDetail = [];
                     if (sIsSub && item.shufersal_sub_name) {
-                        replacementsDetail.push(`שופרסל: הוחלף ב-${item.shufersal_sub_name}`);
+                        replacementsDetail.push(`שופרסל: הוחלף ב-${esc(item.shufersal_sub_name)}`);
                     }
                     if (rIsSub && item.rami_sub_name) {
-                        replacementsDetail.push(`רמי לוי: הוחלף ב-${item.rami_sub_name}`);
+                        replacementsDetail.push(`רמי לוי: הוחלף ב-${esc(item.rami_sub_name)}`);
                     }
                     if (vIsSub && item.victory_sub_name) {
-                        replacementsDetail.push(`ויקטורי: הוחלף ב-${item.victory_sub_name}`);
+                        replacementsDetail.push(`ויקטורי: הוחלף ב-${esc(item.victory_sub_name)}`);
                     }
                     if (mIsSub && item.mck_sub_name) {
-                        replacementsDetail.push(`מחסני השוק: הוחלף ב-${item.mck_sub_name}`);
+                        replacementsDetail.push(`מחסני השוק: הוחלף ב-${esc(item.mck_sub_name)}`);
                     }
                     
                     const detailHtml = replacementsDetail.length > 0 
@@ -2968,7 +2075,7 @@ async function compareCarts() {
                     html += `
                     <div class="product-item" style="flex-direction: column; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #f3f4f6;">
                         <div style="display: flex; justify-content: space-between; width: 100%;">
-                            <span class="product-name" style="font-weight: 500;">${item.name} x${item.quantity}</span>
+                            <span class="product-name" style="font-weight: 500;">${esc(item.name)} x${esc(item.quantity)}</span>
                             <div class="product-prices">
                                 ${sText}
                                 ${rText}${vText}${mText}
@@ -2983,7 +2090,7 @@ async function compareCarts() {
             if (outOfStockItems.length > 0) {
                 html += '<div class="section-label">חסר במלאי לחלוטין</div><div class="out-section">';
                 outOfStockItems.forEach((item) => {
-                    html += `<div class="out-item"><div class="out-item-name">${item.name} x${item.quantity}</div>`;
+                    html += `<div class="out-item"><div class="out-item-name">${esc(item.name)} x${esc(item.quantity)}</div>`;
                     const missingStores = [
                         (compareShufersal && item.isShufersalMissing) ? 'שופרסל' : '',
                         (compareRamiLevy && item.isRamiMissing) ? 'רמי לוי' : '',
@@ -2998,14 +2105,15 @@ async function compareCarts() {
             if (missingItems.length > 0) {
                 html += '<div class="section-label">לא נמצא במאגר לחלוטין</div><div class="missing-section">';
                 missingItems.forEach(item => {
-                    html += `<div class="missing-item">❌ ${item.name} x${item.quantity}</div>`;
+                    html += `<div class="missing-item">${esc(item.name)} x${esc(item.quantity)}</div>`;
                 });
                 html += '</div>';
             }
 
             html += '</div></div>';
             resultDiv.innerHTML = html;
-            statusDiv.innerHTML = '✅ סיימנו!';
+            document.getElementById('startView').hidden = true;
+            statusDiv.innerHTML = 'סיימנו';
 
             sendAnalyticsEvent('comparisons', {
                 cartSize: rawCartItems.length,
@@ -3026,6 +2134,7 @@ async function compareCarts() {
                 .map(code => ({ targetCode: code, quantity: 0 }));
             finalCartToTransfer = inStockItems.concat(deletePayload);
 
+            document.getElementById('compareAgain')?.addEventListener('click', compareCarts);
             document.getElementById('detailsToggle')?.addEventListener('click', () => {
                 document.getElementById('detailsContent').classList.toggle('open');
                 document.getElementById('toggleArrow').classList.toggle('open');
@@ -3038,9 +2147,11 @@ async function compareCarts() {
                 const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
                 allSources.forEach(i => {
                     if (!i.isRamiMissing && i.targetCode && i.quantity > 0) {
+                        const ramiBarcode = String(i.shufersal_code || '').replace(/^P_/, '').replace(/\D/g, '');
                         ramiCart.push({
                             targetCode: i.targetCode,
-                            quantity: i.quantity
+                            quantity: i.quantity,
+                            ...(ramiBarcode ? { barcode: ramiBarcode } : {})
                         });
                     }
                 });
@@ -3062,8 +2173,8 @@ async function compareCarts() {
                 const victoryCart = [];
                 const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
                 allSources.forEach(i => {
-                    if (!i.isVictoryMissing && (i.victory_code || i.victory_retailer_id) && i.quantity > 0) {
-                        const cleanBarcode = i.shufersal_code ? i.shufersal_code.replace('P_', '') : '';
+                    const cleanBarcode = i.shufersal_code ? i.shufersal_code.replace('P_', '') : '';
+                    if (!i.isVictoryMissing && (i.victory_code || cleanBarcode) && i.quantity > 0) {
                         victoryCart.push({
                             name: i.name, amount: i.quantity, quantity: i.quantity,
                             shufersal_code: i.shufersal_code || '',
@@ -3120,16 +2231,13 @@ async function compareCarts() {
         }
 
     } catch(error) {
-        document.getElementById('result').innerHTML = `<p style="color:#dc2626; text-align:center; padding:16px;">!שגיאה:<br>${error.message}</p>`;
+        document.getElementById('result').innerHTML = `<p style="color:#dc2626; text-align:center; padding:16px;">!שגיאה:<br>${esc(error.message)}</p>`;
         document.getElementById('status').innerHTML = '';
         compareBtn.disabled = false;
         console.error(error);
     }
 }
 
-// ===== VICTORY DEBUG AGENT =====
-function agentVictoryDebug() { /* (נשאר ללא שינוי) */ }
-async function debugVictoryConnection() { /* (נשאר ללא שינוי) */ }
 
 // ===== FIREBASE ANALYTICS =====
 const FIREBASE_PROJECT_ID = 'supermarket-compare-81306';

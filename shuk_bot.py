@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 # Constants
 SUPABASE_URL = "https://icdethibkzwzguwmfoef.supabase.co"
-API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImljZGV0aGlia3p3emd1d21mb2VmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTg1MzMxNywiZXhwIjoyMDk3NDI5MzE3fQ.Kni3uAk3mAEtLNNgsRxPwIX4KfKqSZ7kK2NZ0MJq750"
+API_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 STORE_NAME = "machsanei_hashuk"
 BRANCH_ID = 836  # Beer Sheva
 XML_PATH = "PriceFull7290058140886-001-070-20260411-001008.xml"

@@ -29,6 +29,11 @@ async function transferCartInstantly(cartItems) {
         }
     }
 
+    if (!secretToken) {
+        await transferGuestCart(cartItems, ramiLevyStorage);
+        return;
+    }
+
     let requestHeaders = {
         "accept": "application/json, text/plain, */*",
         "content-type": "application/json;charset=UTF-8",
@@ -128,6 +133,55 @@ async function transferCartInstantly(cartItems) {
             updateStatus(`❌ שגיאה ${response.status}. השרת מסרב לקבל.`);
         }
 
+    } catch (error) {
+        updateStatus("❌ שגיאת רשת מול השרת.");
+        console.error(error);
+    }
+}
+
+// Guest: the cart is kept only in localStorage["ramilevy"], so write it there.
+async function transferGuestCart(cartItems, rawState) {
+    try {
+        let state = {};
+        try { state = JSON.parse(rawState) || {}; } catch (e) { /* no usable state */ }
+        const store = String((state.cart && state.cart.storeId) || 331);
+        const quantities = {};
+        const removeIds = new Set();
+        const barcodes = {};
+        cartItems.forEach(i => {
+            const id = String(i.targetCode);
+            const qty = i.quantity !== undefined ? Number(i.quantity) : 1;
+            if (qty > 0) quantities[id] = qty; else removeIds.add(id);
+            if (i.barcode) barcodes[id] = String(i.barcode).replace(/\D/g, '');
+        });
+
+        updateStatus("⚡ מביא פרטי מוצרים מהקטלוג...");
+        const products = [];
+        let missing = 0;
+        for (const id of Object.keys(quantities)) {
+            // The site's own search finds a product by barcode; q=<id> is unconfirmed, so it is only the fallback.
+            const resp = await fetch("https://www.rami-levy.co.il/api/catalog", {
+                method: "POST",
+                headers: { "accept": "application/json, text/plain, */*", "content-type": "application/json;charset=UTF-8", "locale": "he" },
+                body: JSON.stringify({ q: barcodes[id] || id, store: store, size: 10 })
+            });
+            if (!resp.ok) { updateStatus(`❌ שגיאה ${resp.status} בקטלוג.`); return; }
+            const data = await resp.json();
+            const hit = ((data && data.data) || []).find(p => String(p.id) === id || (barcodes[id] && String(p.barcode) === barcodes[id]));
+            if (hit) {
+                quantities[String(hit.id)] = quantities[id]; // a barcode match may carry a newer id than the saved one
+                products.push(hit);
+            } else missing++;
+        }
+        if (missing > 0) {
+            updateStatus("⚠️ חלק מהמוצרים לא נמצאו בקטלוג ולא נוספו.");
+        }
+
+        state = mergeGuestCart(state, products, quantities);
+        state.cart.items = state.cart.items.filter(i => !removeIds.has(String(i.id)));
+        localStorage.setItem('ramilevy', JSON.stringify(state));
+        updateStatus("🎉 עבר בהצלחה! מרענן את העמוד...");
+        setTimeout(() => { window.location.reload(); }, 1500);
     } catch (error) {
         updateStatus("❌ שגיאת רשת מול השרת.");
         console.error(error);

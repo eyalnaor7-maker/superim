@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>popup preview (dev only)</title>
+<link rel="stylesheet" href="../../popup.css">
+<style>
+body{width:auto;background:#e9ecf2;padding:24px;display:flex;gap:24px;align-items:flex-start}
+.frame{width:360px;background:var(--bg);border-radius:20px;overflow:hidden;box-shadow:0 20px 50px -12px rgba(15,23,42,.35);padding-bottom:12px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.4a1 1 0 0 0 1 .8h9.6a1 1 0 0 0 1-.8L21 7H6"/></symbol>
+</svg>
+<div class="frame" id="f1"></div>
+<div class="frame" id="f2"></div>
+<div class="frame" id="f3"></div>
+<script src="../../safe_html.js"></script>
+<script src="../../results_view.js"></script>
+<script>
+function sample() {
+    const list = [
+        { key: 'ramiLevy', name: 'רמי לוי', total: 412.3, info: 'כל המוצרים נמצאו', hasData: true },
+        { key: 'victory', name: 'ויקטורי', total: 428.9, info: 'חסרים 2 מוצרים', hasData: true },
+        { key: 'shufersal', name: 'שופרסל', total: 450.1, info: 'הסופר הנוכחי שלך', hasData: true },
+        { key: 'machsaneiHashuk', name: 'מחסני השוק', total: 0, info: '', hasData: false, debugInfo: 'מחירים לא נמצאו' }
+    ];
+    const sortable = list.filter(s => s.hasData).sort((a, b) => a.total - b.total);
+    return { orderedStores: [...sortable, ...list.filter(s => !s.hasData)], sortable, itemCount: 23 };
+}
+const s = sample();
+document.getElementById('f1').innerHTML = renderStoreSummary({ ...s, activeStore: 'shufersal' });
+document.getElementById('f2').innerHTML = renderStoreSummary({ ...s, activeStore: 'ramiLevy' });
+document.getElementById('f3').innerHTML = renderStoreSummary({ orderedStores: [], sortable: [], activeStore: 'shufersal', itemCount: 0 });
+</script>
+</body>
+</html>

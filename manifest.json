@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "השוואת עגלות סופר",
-  "version": "2.0",
+  "version": "2.1",
   "description": "תוסף שמשווה את עגלת הקניות שלך מול רשתות מתחרות",
   "action": {
     "default_popup": "popup.html",
@@ -19,19 +19,15 @@
     "*://*.shufersal.co.il/*",
     "*://*.mck.co.il/*",
     "*://firestore.googleapis.com/*",
-    "*://generativelanguage.googleapis.com/*",
     "*://*.supabase.co/*"
   ],
-  "web_accessible_resources": [
-    {
-      "resources": ["prices.json", "substitutes.json", "config.json", "settings.html", "settings.js", "branch_service.js"],
-      "matches": ["<all_urls>"]
-    }
-  ],
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' https://*.supabase.co https://firestore.googleapis.com https://*.rami-levy.co.il https://*.shufersal.co.il https://*.victoryonline.co.il https://*.victory.co.il https://*.mck.co.il"
+  },
   "content_scripts": [
     {
       "matches": ["*://*.rami-levy.co.il/*"],
-      "js": ["rami_levy_injector.js"]
+      "js": ["rami_guest.js", "rami_levy_injector.js"]
     },
     {
       "matches": ["*://*.victoryonline.co.il/*", "*://*.victory.co.il/*"],

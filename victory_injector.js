@@ -1,8 +1,10 @@
 // ===== VICTORY INJECTOR =====
 // Content script that runs on victoryonline.co.il pages.
 
-const VICTORY_RETAILER_ID = 1470;
-const VICTORY_APP_ID = 4;
+const VICTORY_API = 'https://api.victoryonline.co.il/api/web';
+const VICTORY_ALGOLIA_URL = 'https://QF3L7C47QU-dsn.algolia.net/1/indexes/*/queries?x-algolia-api-key=0abb07df3782882c383198f99009782d&x-algolia-application-id=QF3L7C47QU';
+// Inlined from victory_match.js (this content script loads alone).
+const normalizeVictoryBarcode = v => String(v == null ? '' : v).replace(/^P_/, '').replace(/\D/g, '').replace(/^0+/, '');
 
 function initVictory() {
     chrome.storage.local.get(['savedCartVictory'], function (result) {
@@ -23,121 +25,73 @@ async function transferCartToVictory(cartItems) {
     createVictoryStatusWindow();
     updateVictoryStatus('🔍 מתחבר למערכת של ויקטורי...');
 
-    let token = '';
-    let branchId = null;
-
-    // Search token and branchId in localStorage (same as Machsanei Hashuk - Stor.ai platform)
-    for (const key of Object.keys(localStorage)) {
-        try {
-            const raw = localStorage.getItem(key);
-            if (!raw || raw.length < 4) continue;
-
-            // Direct token as hex string
-            if (/^[0-9a-f]{60,}$/.test(raw.trim())) {
-                token = raw.trim();
-                continue;
-            }
-
-            const p = JSON.parse(raw);
-            if (typeof p !== 'object' || !p) continue;
-
-            // Search token
-            const t = p?.token || p?.authToken || p?.access_token || p?.user?.token
-                    || p?.accessToken || p?.auth?.token || p?.session?.token;
-            if (t && typeof t === 'string' && t.length > 40) token = t;
-
-            // Search branchId
-            const bid = p?.branchId || p?.branch?.id || p?.selectedBranch?.id
-                      || p?.currentBranch?.id || p?.store?.branchId;
-            if (bid && !branchId) branchId = Number(bid);
-
-        } catch (e) {}
-    }
-
-    if (!token) {
-        updateVictoryStatus('❌ שגיאה: לא הצלחתי למצוא משתמש מחובר. אנא התחבר לאתר ויקטורי.');
-        return;
-    }
-
-    if (!branchId) {
-        // Attempt to discover branchId via API
-        const headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Content-Type': 'application/json;charset=UTF-8',
-            'Authorization': 'Bearer ' + token
-        };
-        try {
-            const r = await fetch(`/v2/retailers/${VICTORY_RETAILER_ID}/users/me?appId=${VICTORY_APP_ID}`, {
-                headers, credentials: 'include'
-            });
-            if (r.ok) {
-                const d = await r.json();
-                branchId = d?.branchId || d?.selectedBranchId || d?.branch?.id || d?.user?.branchId;
-            }
-        } catch(e) {}
-    }
-
-    if (!branchId) {
-        updateVictoryStatus('❌ שגיאה: לא הצלחתי למצוא סניף. אנא בחר סניף באתר ויקטורי.');
-        return;
-    }
-
-    const headers = {
-        "accept": "application/json, text/plain, */*",
-        "content-type": "application/json;charset=UTF-8",
-        "Authorization": 'Bearer ' + token
-    };
-
-    updateVictoryStatus('🚀 מכין את המוצרים להעברה...');
-
-    const linesPayload = [];
-    let successCount = 0;
-
-    for (const item of cartItems) {
-        const internalCode = item.victory_code || item.victory_retailer_id || item.retailerProductId;
-
-        if (internalCode) {
-            linesPayload.push({
-                quantity: item.amount || item.quantity || 1,
-                soldBy: null,
-                isCase: false,
-                retailerProductId: parseInt(internalCode),
-                type: 1
-            });
-            successCount++;
-        }
-    }
-
-    if (linesPayload.length === 0) {
-        updateVictoryStatus('❌ אין מוצרים להעברה (חסרים קודים פנימיים).');
-        return;
-    }
-
-    const payload = {
-        lines: linesPayload,
-        deliveryType: 1
-    };
-
-    updateVictoryStatus('🛒 משגר את העגלה לויקטורי...');
-    const addUrl = `https://www.victoryonline.co.il/v2/retailers/${VICTORY_RETAILER_ID}/branches/${branchId}/carts?appId=${VICTORY_APP_ID}`;
-
     try {
-        const addResponse = await fetch(addUrl, {
-            method: 'POST',
-            headers: headers,
-            credentials: 'include',
+        // 1. Resolve each line to a new-platform product id
+        const lines = new Map();
+        const toSearch = [];
+        for (const item of cartItems) {
+            const quantity = Number(item.amount || item.quantity) || 1;
+            const id = item.victory_code || item.victory_retailer_id;
+            if (id) lines.set(String(id), quantity);
+            else if (normalizeVictoryBarcode(item.barcode || item.shufersal_code)) toSearch.push({ barcode: item.barcode || item.shufersal_code, quantity });
+        }
+
+        if (toSearch.length > 0) {
+            updateVictoryStatus('🔎 מאתר מוצרים בויקטורי...');
+            const branchId = await new Promise(resolve => chrome.storage.sync.get(['userSettings'], r => resolve(String((r?.userSettings?.victory?.platform === 2 && r.userSettings.victory.branchId) || '55'))));
+            for (let start = 0; start < toSearch.length; start += 20) {
+                const batch = toSearch.slice(start, start + 20);
+                const resp = await fetch(VICTORY_ALGOLIA_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ requests: batch.map(i => ({
+                        indexName: 'products', query: normalizeVictoryBarcode(i.barcode), hitsPerPage: 6, page: 0,
+                        facetFilters: [[`inStockBranches:${branchId}`]], relevancyStrictness: 0
+                    })) })
+                });
+                if (!resp.ok) break;
+                const data = await resp.json();
+                if (data?.captchaAction) break;
+                batch.forEach((item, idx) => {
+                    const want = normalizeVictoryBarcode(item.barcode);
+                    const hit = (data?.results?.[idx]?.hits || []).find(h => h && normalizeVictoryBarcode(h.sku) === want);
+                    if (hit) lines.set(String(hit.id), item.quantity);
+                });
+            }
+        }
+
+        if (lines.size === 0) {
+            updateVictoryStatus('❌ לא נמצאו מוצרים מתאימים בויקטורי.');
+            return;
+        }
+
+        // 2. Get or create the guest cart session
+        let sessionId = localStorage.getItem('cart-session-id');
+        if (!sessionId) {
+            const r = await fetch(`${VICTORY_API}/cart/session`, { headers: { 'Accept': 'application/json' } });
+            const j = r.ok ? await r.json() : null;
+            sessionId = j?.status === 'success' ? j.data?.sessionId : null;
+            if (!sessionId) {
+                updateVictoryStatus('❌ לא הצלחתי לפתוח עגלה באתר ויקטורי.');
+                return;
+            }
+            localStorage.setItem('cart-session-id', sessionId);
+        }
+
+        // 3. One PUT with the whole array
+        updateVictoryStatus('🛒 משגר את העגלה לויקטורי...');
+        const payload = Array.from(lines.entries()).map(([id, quantity]) => ({ id, quantity }));
+        const putResp = await fetch(`${VICTORY_API}/cart`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Cart-Session-Id': sessionId },
             body: JSON.stringify(payload)
         });
-
-        if (addResponse.ok || addResponse.status === 201) {
-            updateVictoryStatus(`🎉 מדהים! ${successCount} מוצרים הועברו לעגלה שלך! מרענן...`);
+        const putJson = putResp.ok ? await putResp.json().catch(() => null) : null;
+        if (putJson?.status === 'success') {
+            updateVictoryStatus(`🎉 מדהים! ${payload.length} מוצרים הועברו לעגלה שלך! מרענן...`);
             setTimeout(() => window.location.reload(), 2000);
         } else {
-            updateVictoryStatus(`❌ השרת סירב לבקשה (שגיאה ${addResponse.status})`);
-            const errorText = await addResponse.text();
-            console.error("פירוט שגיאה מהשרת:", errorText);
+            updateVictoryStatus(`❌ השרת סירב לבקשה (שגיאה ${putResp.status})`);
         }
-
     } catch (error) {
         console.error("שגיאת רשת:", error);
         updateVictoryStatus('❌ חלה שגיאת תקשורת מול שרתי ויקטורי.');
