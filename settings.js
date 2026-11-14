@@ -71,7 +71,21 @@ function populateDropdowns(cityFilter) {
             autoPicked[networkKey] = true;
         }
         selectEl.onchange = () => { autoPicked[networkKey] = false; };
+        if (networkKey === 'victory' && cityFilter && !cityMatched && networkBranches.length > 0) suggestVictoryDeliveryBranch(cityFilter);
     }
+}
+
+// Victory has a branch in few cities but delivers to many more: ask its site which branch delivers to this city.
+async function suggestVictoryDeliveryBranch(city) {
+    if (!ISRAEL_CITIES.some(c => normCity(c) === normCity(city))) return; // a complete city name only, not every keystroke
+    const id = await window.branchService.fetchVictoryDeliveryBranchId(city);
+    const selectEl = document.getElementById('victory-branch');
+    const option = id && Array.from(selectEl.options).find(o => o.value === id);
+    const cityChanged = document.getElementById('city-input').value.trim() !== city;
+    if (!option || cityChanged || (selectEl.value && !autoPicked.victory)) return; // the user's own choice always wins
+    option.text = `${option.dataset.name} — משלוחים ל${city}`;
+    selectEl.value = id;
+    autoPicked.victory = true;
 }
 
 function loadSavedSettings() {
