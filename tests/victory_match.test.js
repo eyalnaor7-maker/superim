@@ -53,3 +53,14 @@ test('victoryDeliveryFromSlots: nearest day fee, and a later free-delivery day',
   assert.strictEqual(victoryDeliveryFromSlots({ status: 'success', data: {} }), null);
   assert.strictEqual(victoryDeliveryFromSlots({ status: 'error' }), null);
 });
+
+const { deliveryFromDays } = require('../victory_match.js');
+test('deliveryFromDays: nearest day decides the fee, a later cheaper day is reported', () => {
+  // Rami Levy and Shufersal shapes reduce to this: fees per day (live shapes seen 2026-11-15)
+  assert.deepStrictEqual(deliveryFromDays({ '2026-11-17': [35.9, 35.9], '2026-11-18': [35.9], '2026-11-24': [0, 35.9] }),
+    { fee: 35.9, cheaper: { date: '2026-11-24', fee: 0 } });
+  assert.deepStrictEqual(deliveryFromDays({ '2026-11-17': [0], '2026-11-18': [35.9] }), { fee: 0, cheaper: null }); // free today
+  assert.deepStrictEqual(deliveryFromDays({ '2026-11-17': [null, undefined], '2026-11-18': [29.9] }), { fee: 29.9, cheaper: null });
+  assert.strictEqual(deliveryFromDays({}), null);
+  assert.strictEqual(deliveryFromDays(undefined), null);
+});

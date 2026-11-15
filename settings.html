@@ -50,6 +50,9 @@
                 <input type="text" id="city-input" list="city-list" placeholder="התחילו להקליד שם של עיר" autocomplete="off">
                 <datalist id="city-list"></datalist>
                 <div class="help-text">העיר מסננת את רשימות הסניפים למטה.</div>
+                <label class="gap" for="street-input">רחוב (לא חובה)</label>
+                <input type="text" id="street-input" maxlength="60" placeholder="שם הרחוב בלבד, בלי מספר בית" autocomplete="address-line1">
+                <div class="help-text">עם רחוב אפשר לבדוק ברמי לוי כמה עולה המשלוח בכל יום, ולזהות יום עם משלוח חינם. הרחוב נשמר בדפדפן שלך ונשלח רק לאתר רמי לוי.</div>
             </div>
 
             <form id="settings-form" style="display: none;">
