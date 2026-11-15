@@ -25,12 +25,15 @@ button { font-family: inherit; }
 .big { font-size: 46px; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; margin: 2px 0 10px; }
 .hero.s .big { font-size: 24px; letter-spacing: -.01em; margin-bottom: 0; }
 .pill { display: inline-block; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 99px; background: var(--pill); color: var(--ptx); }
-#userSettingsBtn {
+#userSettingsBtn, #popoutBtn {
     position: absolute; top: 18px; left: 20px; z-index: 2; width: 34px; height: 34px;
     display: grid; place-items: center; border: 0; border-radius: 10px; cursor: pointer;
     background: rgba(255,255,255,.14); color: #fff;
 }
-#userSettingsBtn:hover { background: rgba(255,255,255,.26); }
+#userSettingsBtn:hover, #popoutBtn:hover { background: rgba(255,255,255,.26); }
+#popoutBtn { left: 60px; }
+#userSettingsBtn:focus-visible, #popoutBtn:focus-visible, .link-btn:focus-visible { outline: 2px solid #fcd34d; outline-offset: 2px; }
+body.detached { width: auto; min-height: 100vh; }
 
 /* cards and rows */
 .win { margin: -28px 14px 0; padding: 14px; border-radius: 16px; background: var(--card); box-shadow: var(--sh); border: 1px solid var(--ln); position: relative; }
@@ -110,3 +113,16 @@ button { font-family: inherit; }
 .out-item-sub { margin-top: 4px; }
 .missing-item { padding: 6px 12px; border-bottom: 1px solid var(--ln); font-size: 12px; color: var(--sub); }
 .missing-item:last-child { border-bottom: 0; }
+
+/* loading: the ball of dots replaces the button while prices are fetched */
+#loading { text-align: center; padding: 2px 0 6px; }
+#loading[hidden] { display: none; }
+#loading:not([hidden]) + .cta, #loading:not([hidden]) ~ #startNote { display: none; }
+#sphere { width: 120px; height: 120px; display: block; margin: 0 auto 6px; }
+
+/* footer links and the saved-carts list */
+.foot { display: flex; justify-content: center; gap: 14px; padding: 4px 20px 14px; }
+.hist { padding: 12px 0; border-bottom: 1px solid var(--ln); }
+.hist .names { font-size: 12px; color: var(--sub); margin: 2px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist .btns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--sub); }
+.hist .mini { margin-top: 0; }

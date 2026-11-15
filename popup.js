@@ -64,14 +64,70 @@ async function fetchSubstituteDetails(substituteBarcodes, headers) {
 
 
 // ===== CHROME HELPERS =====
-function createHiddenTab(url) {
-    return new Promise(resolve => chrome.tabs.create({ url, active: false }, resolve));
+// The popup can be detached into its own window (popup.html?tabId=N) so the shopper can move it off the cart.
+const DETACHED_TAB_ID = Number(new URLSearchParams(location.search).get('tabId')) || null;
+let targetWindowId = null; // the browser window of the store tab: new tabs must open there, not in the detached window
+
+async function getTargetTab() {
+    let tab = null;
+    if (DETACHED_TAB_ID) {
+        tab = await chrome.tabs.get(DETACHED_TAB_ID).catch(() => null);
+        if (!tab) tab = (await chrome.tabs.query({ active: true, windowType: 'normal' }))[0] || null; // the store tab was closed
+    } else {
+        tab = (await chrome.tabs.query({ active: true, currentWindow: true }))[0] || null;
+    }
+    if (tab) targetWindowId = tab.windowId;
+    return tab;
 }
 
-async function fetchInHiddenWindow(url, func, args = [], delay = 2500) {
+function openTab(url, active = true) {
+    return chrome.tabs.create({ url, active, ...(targetWindowId ? { windowId: targetWindowId } : {}) });
+}
+
+async function popOut() {
+    const tab = await getTargetTab();
+    const { winPos } = await chrome.storage.local.get('winPos');
+    const base = { url: `popup.html?tabId=${tab ? tab.id : ''}`, type: 'popup', width: 378, height: 660 };
+    // a remembered position on a screen that is no longer connected is refused: open at the default place instead
+    await chrome.windows.create({ ...base, ...(winPos || {}) }).catch(() => chrome.windows.create(base));
+    await chrome.storage.local.set({ detached: true });
+    window.close();
+}
+
+async function initWindowMode() {
+    const btn = document.getElementById('popoutBtn');
+    if (!DETACHED_TAB_ID) {
+        if ((await chrome.storage.local.get('detached')).detached) return popOut(); // the shopper chose the movable window last time
+        btn.addEventListener('click', popOut);
+        return;
+    }
+    document.body.classList.add('detached');
+    btn.title = 'חזרה לחלונית הרגילה של התוסף';
+    btn.setAttribute('aria-label', btn.title);
+    btn.addEventListener('click', async () => { await chrome.storage.local.set({ detached: false }); window.close(); });
+    const me = await chrome.windows.getCurrent();
+    chrome.windows.onBoundsChanged.addListener(w => {
+        if (w.id === me.id) chrome.storage.local.set({ winPos: { left: w.left, top: w.top } });
+    });
+}
+
+function createHiddenTab(url) {
+    return openTab(url, false);
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function fetchInHiddenWindow(url, func, args = []) {
     const tab = await createHiddenTab(url);
     try {
-        await new Promise(r => setTimeout(r, delay));
+        // wait until the tab really is on the chain's site (not a fixed guess), then let the page settle
+        const origin = new URL(url).origin;
+        for (let i = 0; i < 75; i++) {
+            const t = await chrome.tabs.get(tab.id).catch(() => null);
+            if (!t || String(t.url || '').startsWith(origin)) break;
+            await sleep(200);
+        }
+        await sleep(1200);
         const results = await chrome.scripting.executeScript({ 
             target: { tabId: tab.id }, 
             world: 'MAIN',
@@ -1059,8 +1115,7 @@ async function agentMCKAgent(items, settingsBranchId) {
 async function initSettings() {
     let currentUrl = '';
     try {
-        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-        const tab = tabs[0];
+        const tab = await getTargetTab();
         currentUrl = tab ? (tab.url || '') : '';
     } catch (e) {
         console.warn("Failed to query active tab for settings:", e);
@@ -1070,9 +1125,11 @@ async function initSettings() {
 
     const storeNames = { shufersal: 'שופרסל', ramiLevy: 'רמי לוי', victory: 'ויקטורי', machsaneiHashuk: 'מחסני השוק' };
     const onStoreSite = /shufersal\.co\.il|rami-levy\.co\.il|victory|mck\.co\.il/.test(currentUrl);
-    document.getElementById('startHeadline').textContent = onStoreSite
+    const { profile } = await chrome.storage.sync.get('profile');
+    const hello = profile?.name ? `שלום ${profile.name}, ` : '';
+    document.getElementById('startHeadline').textContent = hello + (onStoreSite
         ? `זיהינו עגלה ב${storeNames[activeStore]}`
-        : 'פתחו את העגלה באתר של אחת הרשתות';
+        : 'פתחו את העגלה באתר של אחת הרשתות');
 
     // Check if any branches are missing
     const isMissingSettings = 
@@ -1085,7 +1142,7 @@ async function initSettings() {
         warning.id = 'missingSettingsWarn';
         warning.innerHTML = 'להשוואה מדויקת, <a href="#" style="color:#856404; text-decoration:underline;">הגדר את הסניפים שלך</a>';
         warning.style = 'background: #fff3cd; color: #856404; padding: 10px; text-align: center; font-size: 13px; font-weight: bold; cursor: pointer; border-bottom: 1px solid #ffeeba;';
-        warning.onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+        warning.onclick = () => openTab(chrome.runtime.getURL('settings.html'));
         const storePanel = document.getElementById('storePanel');
         if (storePanel && storePanel.parentNode) {
             storePanel.parentNode.insertBefore(warning, storePanel);
@@ -1152,9 +1209,11 @@ async function initSettings() {
     const userSettingsBtn = document.getElementById('userSettingsBtn');
     if (userSettingsBtn) {
         userSettingsBtn.addEventListener('click', () => {
-            chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+            openTab(chrome.runtime.getURL('settings.html'));
         });
     }
+    document.getElementById('feedbackLink').addEventListener('click', () => openTab(chrome.runtime.getURL('settings.html#feedback')));
+    document.getElementById('historyLink').addEventListener('click', showHistory);
 }
 
 // ===== MAIN COMPARISON FLOW =====
@@ -1168,6 +1227,9 @@ async function compareCarts() {
     document.getElementById('startView').hidden = false;
     finalCartToTransfer = [];
     compareBtn.disabled = true;
+    const loading = document.getElementById('loading');
+    loading.hidden = false;
+    const stopSphere = startSphere(document.getElementById('sphere'));
 
     document.getElementById('storePanel').classList.remove('open');
 
@@ -1178,8 +1240,7 @@ async function compareCarts() {
         const compareVictory = settings.victory !== false;
         const compareMCK = settings.machsaneiHashuk !== false;
 
-        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-        const tab = tabs[0];
+        const tab = await getTargetTab();
 
         if (!tab) {
             throw new Error("לא נמצאה לשונית פעילה. נסה לרענן את העמוד.");
@@ -1537,62 +1598,41 @@ async function compareCarts() {
 
         // We do not return early even if matchedItems.length === 0, so that active store's scanned cart total is still rendered
 
-        // 3.8. Fetch Shufersal prices live
-        let shufersalResults = [];
-        let shufersalDebug = null;
-        if (activeStore !== 'shufersal' && compareShufersal && itemsForShufersal.length > 0) {
-            statusDiv.innerHTML = 'בודק מחירים בשופרסל...';
-            try {
-                const shufersalResponse = await fetchInHiddenWindow('https://www.shufersal.co.il/online/he/', agentShufersalAgent, [itemsForShufersal], 3500);
-                if (shufersalResponse?.results) {
-                    shufersalResults = shufersalResponse.results;
-                    shufersalDebug = shufersalResponse.debug || null;
-                }
-            } catch(e) {}
-        }
+        // 3.8-5.5. Ask the other chains at the same time, one hidden tab each (one after the other took about half a minute)
+        let shufersalResults = [], shufersalDebug = null, ramiLevyResults = [];
+        let victoryResults = [], agentDebug = null, mckResults = [], mckDebug = null;
+        const jobs = [];
+        let jobsDone = 0;
+        const ask = run => jobs.push(run().catch(e => console.warn('price check failed', e)).then(() => {
+            statusDiv.textContent = `נבדקו ${++jobsDone} מתוך ${jobs.length} רשתות...`;
+        }));
+        const us = settings.userSettings || {};
 
-        // 4. Fetch Rami Levy prices
-        let ramiLevyResults = [];
-        if (activeStore !== 'ramiLevy' && compareRamiLevy && itemsForRamiLevy.length > 0) {
-            statusDiv.innerHTML = 'בודק מחירים ברמי לוי...';
-            try {
-                ramiLevyResults = await fetchInHiddenWindow('https://www.rami-levy.co.il/he', agentInsideCartEngine, [itemsForRamiLevy, settings.userSettings?.ramiLevy?.branchId || null], 2500) || [];
-            } catch(e) {}
-        }
-
-        // 5. Fetch Victory prices
-        let victoryResults = [];
-        let agentDebug = null;
-        if (activeStore !== 'victory' && compareVictory && itemsForVictory.length > 0) {
-            statusDiv.innerHTML = 'בודק מחירים בויקטורי...';
-            try {
-                const agentResponse = await fetchInHiddenWindow('https://www.victoryonline.co.il', agentVictoryAgent, [itemsForVictory, (settings.userSettings?.victory?.platform === 2 && settings.userSettings.victory.branchId) || null], 3500);
-                if (agentResponse?.results) {
-                    // the search answer carries the unit price and the sale names ("2 ב-₪110"); the shopper pays the sale total
-                    victoryResults = agentResponse.results.map(r => r.outOfStock ? r : { ...r, finalTotal: victorySaleTotal(r.unitPrice, Number(r.quantity) || 1, r.sales) });
-                    agentDebug = agentResponse.debug || null;
-                }
-            } catch(e) {}
-        }
-
-        // 5.5. Fetch MCK prices
-        let mckResults = [];
-        let mckDebug = null;
-        if (activeStore !== 'machsaneiHashuk' && compareMCK && itemsForMCK.length > 0) {
-            statusDiv.innerHTML = 'בודק מחירים במחסני השוק...';
-            try {
-                const mckResponse = await fetchInHiddenWindow('https://www.mck.co.il', agentMCKAgent, [itemsForMCK, settings.userSettings?.machsaneiHashuk?.branchId || null], 3500);
-                if (mckResponse?.results) {
-                    mckResults = mckResponse.results;
-                    mckDebug = mckResponse.debug || null;
-                }
-            } catch(e) {}
-        }
+        if (activeStore !== 'shufersal' && compareShufersal && itemsForShufersal.length > 0) ask(async () => {
+            const r = await fetchInHiddenWindow('https://www.shufersal.co.il/online/he/', agentShufersalAgent, [itemsForShufersal]);
+            if (r?.results) { shufersalResults = r.results; shufersalDebug = r.debug || null; }
+        });
+        if (activeStore !== 'ramiLevy' && compareRamiLevy && itemsForRamiLevy.length > 0) ask(async () => {
+            ramiLevyResults = await fetchInHiddenWindow('https://www.rami-levy.co.il/he', agentInsideCartEngine, [itemsForRamiLevy, us.ramiLevy?.branchId || null]) || [];
+        });
+        if (activeStore !== 'victory' && compareVictory && itemsForVictory.length > 0) ask(async () => {
+            const r = await fetchInHiddenWindow('https://www.victoryonline.co.il', agentVictoryAgent, [itemsForVictory, (us.victory?.platform === 2 && us.victory.branchId) || null]);
+            if (r?.results) {
+                // the search answer carries the unit price and the sale names ("2 ב-₪110"); the shopper pays the sale total
+                victoryResults = r.results.map(x => x.outOfStock ? x : { ...x, finalTotal: victorySaleTotal(x.unitPrice, Number(x.quantity) || 1, x.sales) });
+                agentDebug = r.debug || null;
+            }
+        });
+        if (activeStore !== 'machsaneiHashuk' && compareMCK && itemsForMCK.length > 0) ask(async () => {
+            const r = await fetchInHiddenWindow('https://www.mck.co.il', agentMCKAgent, [itemsForMCK, us.machsaneiHashuk?.branchId || null]);
+            if (r?.results) { mckResults = r.results; mckDebug = r.debug || null; }
+        });
+        if (jobs.length) statusDiv.textContent = `בודק מחירים ב-${jobs.length} רשתות במקביל...`;
+        await Promise.all(jobs);
 
         // 6. Classify matched items
         const inStockItems = [];
         const outOfStockItems = [];
-        const itemsToDeleteCodes = new Set();
 
         for (const item of matchedItems) {
             const barcode = item.shufersal_code.replace('P_', '');
@@ -2100,24 +2140,20 @@ async function compareCarts() {
             document.getElementById('startView').hidden = true;
             statusDiv.innerHTML = 'סיימנו';
 
-            sendAnalyticsEvent('comparisons', {
-                cartSize: rawCartItems.length,
-                matchedCount: matchedItems.length,
-                missingCount: missingItems.length,
-                inStockCount: inStockItems.length,
-                outOfStockCount: outOfStockItems.length,
-                shufersalTotal: parseFloat(totalShufersal.toFixed(2)),
-                ramiLevyTotal: compareRamiLevy ? parseFloat(totalRamiLevy.toFixed(2)) : -1,
-                victoryTotal: compareVictory ? parseFloat(totalVictory.toFixed(2)) : -1,
-                mckTotal: compareMCK ? parseFloat(totalMCK.toFixed(2)) : -1,
-                cheapestStore: cheapest ? cheapest.key : 'shufersal'
+            const activeEntry = sortable.find(st => st.key === activeStore);
+            logEvent({
+                type: 'comparison',
+                active_store: activeStore,
+                cheapest_store: cheapest ? cheapest.key : activeStore,
+                cart_size: rawCartItems.length,
+                matched_count: matchedItems.length,
+                saving: cheapest && activeEntry ? Math.max(0, Number((activeEntry.total - cheapest.total - cheapest.gap).toFixed(2))) : 0,
+                totals: Object.fromEntries(sortable.map(st => [st.key, Number(st.total.toFixed(2))])),
+                // product names only feed "most compared products" counters; they are never stored as one cart
+                products: matchedItems.map(i => ({ barcode: i.shufersal_code.replace('P_', ''), name: i.name }))
             });
 
-            const inStockCodes = new Set(inStockItems.map(i => i.targetCode));
-            const deletePayload = Array.from(itemsToDeleteCodes)
-                .filter(code => !inStockCodes.has(code))
-                .map(code => ({ targetCode: code, quantity: 0 }));
-            finalCartToTransfer = inStockItems.concat(deletePayload);
+            finalCartToTransfer = inStockItems;
 
             document.getElementById('compareAgain')?.addEventListener('click', compareCarts);
             document.getElementById('detailsToggle')?.addEventListener('click', () => {
@@ -2127,91 +2163,11 @@ async function compareCarts() {
 
 
 
-            document.getElementById('switchToRamiLevy')?.addEventListener('click', () => {
-                const ramiCart = [];
-                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
-                allSources.forEach(i => {
-                    if (!i.isRamiMissing && i.targetCode && i.quantity > 0) {
-                        const ramiBarcode = String(i.shufersal_code || '').replace(/^P_/, '').replace(/\D/g, '');
-                        ramiCart.push({
-                            targetCode: i.targetCode,
-                            quantity: i.quantity,
-                            ...(ramiBarcode ? { barcode: ramiBarcode } : {})
-                        });
-                    }
-                });
-
-                // Add delete payload for any codes in itemsToDeleteCodes that are not in the new cart
-                const activeCodes = new Set(ramiCart.map(i => i.targetCode));
-                Array.from(itemsToDeleteCodes)
-                    .filter(code => code && !activeCodes.has(code))
-                    .forEach(code => {
-                        ramiCart.push({ targetCode: code, quantity: 0 });
-                    });
-
-                chrome.storage.local.set({ savedCart: ramiCart }, () => {
-                    chrome.tabs.create({ url: 'https://www.rami-levy.co.il/he' });
-                });
+            const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
+            Object.entries(RV_SWITCH).forEach(([storeKey, sw]) => {
+                document.getElementById(sw.id)?.addEventListener('click', () => { logEvent({ type: 'switch', store: storeKey }); sendCartTo(storeKey, allSources); });
             });
-
-            document.getElementById('switchToVictory')?.addEventListener('click', () => {
-                const victoryCart = [];
-                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
-                allSources.forEach(i => {
-                    const cleanBarcode = i.shufersal_code ? i.shufersal_code.replace('P_', '') : '';
-                    if (!i.isVictoryMissing && (i.victory_code || cleanBarcode) && i.quantity > 0) {
-                        victoryCart.push({
-                            name: i.name, amount: i.quantity, quantity: i.quantity,
-                            shufersal_code: i.shufersal_code || '',
-                            barcode: cleanBarcode,
-                            victory_code: i.victory_code || i.victory_retailer_id || null,
-                            victory_retailer_id: i.victory_retailer_id || i.victory_code || null
-                        });
-                    }
-                });
-                chrome.storage.local.set({ savedCartVictory: victoryCart }, () => {
-                    chrome.tabs.create({ url: 'https://www.victoryonline.co.il' });
-                });
-            });
-
-            document.getElementById('switchToMCK')?.addEventListener('click', () => {
-                const mckCart = [];
-                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
-                allSources.forEach(i => {
-                    // items without an internal code still go, so the site shows why nothing was added instead of staying silent
-                    if (!i.isMCKMissing && i.quantity > 0) {
-                        const cleanBarcode = i.shufersal_code ? i.shufersal_code.replace('P_', '') : '';
-                        mckCart.push({
-                            name: i.name, amount: i.quantity, quantity: i.quantity,
-                            shufersal_code: i.shufersal_code || '',
-                            barcode: cleanBarcode,
-                            mck_code: i.mck_code || i.mck_retailer_id || null,
-                            retailerProductId: i.mck_retailer_id || i.mck_code || null
-                        });
-                    }
-                });
-                chrome.storage.local.set({ savedCartMCK: mckCart, savedCartMCKAt: Date.now() }, () => {
-                    chrome.tabs.create({ url: 'https://www.mck.co.il' });
-                });
-            });
-
-            document.getElementById('switchToShufersal')?.addEventListener('click', () => {
-                const shufersalCart = [];
-                const allSources = [...inStockItems, ...outOfStockItems, ...missingItems];
-                allSources.forEach(i => {
-                    const sCode = i.shufersal_code || i.code;
-                    if (sCode && i.quantity > 0) {
-                        shufersalCart.push({
-                            shufersalCode: sCode,
-                            shufersal_code: sCode,
-                            quantity: i.quantity
-                        });
-                    }
-                });
-                chrome.storage.local.set({ savedCartShufersal: shufersalCart }, () => {
-                    chrome.tabs.create({ url: 'https://www.shufersal.co.il/online/he/cart' });
-                });
-            });
+            saveCartToHistory(activeStore, allSources, Object.fromEntries(sortable.map(st => [st.key, Number(st.total.toFixed(2))])));
 
             compareBtn.disabled = false;
         }
@@ -2221,38 +2177,87 @@ async function compareCarts() {
         document.getElementById('status').innerHTML = '';
         compareBtn.disabled = false;
         console.error(error);
+    } finally {
+        stopSphere();
+        loading.hidden = true;
     }
 }
 
 
-// ===== FIREBASE ANALYTICS =====
-const FIREBASE_PROJECT_ID = 'supermarket-compare-81306';
-const FIREBASE_API_KEY    = 'AIzaSyDwDsfZryLFFPw57Il8lBtvgsYFFXqaxYs';
-
-function _toFsVal(v) {
-    if (v === null || v === undefined) return { nullValue: null };
-    if (typeof v === 'boolean') return { booleanValue: v };
-    if (typeof v === 'number')  return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
-    if (typeof v === 'string')  return { stringValue: v };
-    if (Array.isArray(v))       return { arrayValue: { values: v.map(_toFsVal) } };
-    return { stringValue: String(v) };
+// ===== SENDING A CART TO A CHAIN =====
+// The chain's content script (its *_injector.js) picks the cart up from storage and fills the cart on the site.
+function sendCartTo(storeKey, items) {
+    const clean = i => String(i.shufersal_code || '').replace('P_', '');
+    const go = (data, url) => chrome.storage.local.set(data, () => openTab(url));
+    if (storeKey === 'ramiLevy') {
+        go({ savedCart: items.filter(i => !i.isRamiMissing && i.targetCode && i.quantity > 0).map(i => {
+            const barcode = clean(i).replace(/\D/g, '');
+            return { targetCode: i.targetCode, quantity: i.quantity, ...(barcode ? { barcode } : {}) };
+        }) }, 'https://www.rami-levy.co.il/he');
+    } else if (storeKey === 'victory') {
+        go({ savedCartVictory: items.filter(i => !i.isVictoryMissing && (i.victory_code || clean(i)) && i.quantity > 0).map(i => ({
+            name: i.name, amount: i.quantity, quantity: i.quantity, shufersal_code: i.shufersal_code || '', barcode: clean(i),
+            victory_code: i.victory_code || i.victory_retailer_id || null,
+            victory_retailer_id: i.victory_retailer_id || i.victory_code || null
+        })) }, 'https://www.victoryonline.co.il');
+    } else if (storeKey === 'machsaneiHashuk') {
+        // items without an internal code still go, so the site shows why nothing was added instead of staying silent
+        go({ savedCartMCKAt: Date.now(), savedCartMCK: items.filter(i => !i.isMCKMissing && i.quantity > 0).map(i => ({
+            name: i.name, amount: i.quantity, quantity: i.quantity, shufersal_code: i.shufersal_code || '', barcode: clean(i),
+            mck_code: i.mck_code || i.mck_retailer_id || null,
+            retailerProductId: i.mck_retailer_id || i.mck_code || null
+        })) }, 'https://www.mck.co.il');
+    } else {
+        go({ savedCartShufersal: items.filter(i => (i.shufersal_code || i.code) && i.quantity > 0).map(i => ({
+            shufersalCode: i.shufersal_code || i.code, shufersal_code: i.shufersal_code || i.code, quantity: i.quantity
+        })) }, 'https://www.shufersal.co.il/online/he/cart');
+    }
 }
 
-function sendAnalyticsEvent(collection, data) {
-    if (FIREBASE_PROJECT_ID === 'YOUR_PROJECT_ID') return;
+// ===== MY CARTS (kept on this computer only) =====
+const HISTORY_FIELDS = ['name', 'quantity', 'code', 'shufersal_code', 'targetCode', 'victory_code', 'victory_retailer_id', 'mck_code', 'mck_retailer_id', 'isRamiMissing', 'isVictoryMissing', 'isMCKMissing'];
+
+async function saveCartToHistory(store, items, totals) {
+    const slim = items.map(i => Object.fromEntries(HISTORY_FIELDS.filter(f => i[f] != null).map(f => [f, i[f]])));
+    const { cartHistory = [] } = await chrome.storage.local.get('cartHistory');
+    await chrome.storage.local.set({ cartHistory: addToHistory(cartHistory, { at: Date.now(), store, totals, items: slim }) });
+}
+
+async function showHistory() {
+    const { cartHistory = [] } = await chrome.storage.local.get('cartHistory');
+    const resultDiv = document.getElementById('result');
+    resultDiv.innerHTML = renderHistory(cartHistory);
+    document.getElementById('startView').hidden = true;
+    resultDiv.querySelectorAll('[data-build]').forEach(b => b.addEventListener('click', () => {
+        sendCartTo(b.dataset.build, cartHistory[Number(b.dataset.i)].items);
+    }));
+    document.getElementById('historyBack').addEventListener('click', () => {
+        resultDiv.innerHTML = '';
+        document.getElementById('startView').hidden = false;
+    });
+    document.getElementById('historyClear')?.addEventListener('click', async () => {
+        await chrome.storage.local.remove('cartHistory');
+        showHistory();
+    });
+}
+
+// ===== ANONYMOUS STATISTICS (Supabase) =====
+// One row per comparison with totals only, plus per-product counters. No user id and no cart contents are stored.
+async function logEvent(event) {
     try {
-        const fields = {};
-        for (const [k, v] of Object.entries(data)) fields[k] = _toFsVal(v);
-        fields.timestamp = { timestampValue: new Date().toISOString() };
-        fetch(
-            `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection}?key=${FIREBASE_API_KEY}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) }
-        );
-    } catch(e) { }
+        const { shareStats, savedCity } = await chrome.storage.sync.get(['shareStats', 'savedCity']);
+        if (shareStats === false) return; // switched off in the settings page
+        fetch(`${SUPABASE_URL}/rest/v1/rpc/log_event`, {
+            method: 'POST',
+            headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ p: { ...event, city: savedCity || null, ext_version: chrome.runtime.getManifest().version } })
+        }).catch(() => {});
+    } catch (e) { }
 }
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
+    initWindowMode();
     initSettings();
     const btn = document.getElementById('compareBtn');
     if (btn) {

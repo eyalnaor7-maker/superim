@@ -9,9 +9,11 @@
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
         <symbol id="i-cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.4a1 1 0 0 0 1 .8h9.6a1 1 0 0 0 1-.8L21 7H6"/></symbol>
         <symbol id="i-set" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="18" r="2"/></symbol>
+        <symbol id="i-pop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
     </svg>
 
     <button id="userSettingsBtn" title="הגדרות משתמש" aria-label="הגדרות משתמש"><svg class="ic"><use href="#i-set"/></svg></button>
+    <button id="popoutBtn" title="פתיחה בחלון נפרד שאפשר להזיז" aria-label="פתיחה בחלון נפרד שאפשר להזיז"><svg class="ic"><use href="#i-pop"/></svg></button>
 
     <div id="startView">
         <div class="hero s">
@@ -19,8 +21,13 @@
             <div class="big" id="startHeadline"></div>
         </div>
         <div class="win start-card">
+            <div id="loading" hidden>
+                <canvas id="sphere" aria-hidden="true"></canvas>
+                <div class="sub">בודקים את המחירים באתרי הרשתות. זה לוקח כמה שניות, אפשר להמשיך לגלוש.</div>
+            </div>
             <button id="compareBtn" class="cta">להשוות מחירים</button>
-            <div class="sub c">המחירים נבדקים עכשיו מול אתרי הרשתות</div>
+            <div id="status" role="status" aria-live="polite"></div>
+            <div class="sub c" id="startNote">המחירים נבדקים עכשיו מול אתרי הרשתות</div>
         </div>
 
         <div id="storePanel">
@@ -38,15 +45,19 @@
                 <div class="store-note">מחסני השוק: <span id="noteMCK">מחיר חי בזמן אמת</span></div>
             </div>
         </div>
-        <div id="status" role="status"></div>
     </div>
-    <div id="result"></div>
+    <div id="result" aria-live="polite"></div>
+    <div class="foot">
+        <button type="button" class="link-btn" id="historyLink">הסלים שלי</button>
+        <button type="button" class="link-btn" id="feedbackLink">שליחת משוב</button>
+    </div>
 
     <script src="supabase_config.js"></script>
     <script src="safe_html.js"></script>
     <script src="victory_match.js"></script>
     <script src="rami_guest.js"></script>
     <script src="results_view.js"></script>
+    <script src="sphere.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

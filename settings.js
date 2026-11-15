@@ -154,3 +154,36 @@ function saveSettings() {
         }, 3000);
     });
 }
+
+// ===== profile and feedback =====
+document.addEventListener('DOMContentLoaded', () => {
+    const nameInput = document.getElementById('profile-name');
+    const share = document.getElementById('share-stats');
+    chrome.storage.sync.get(['profile', 'shareStats'], d => {
+        nameInput.value = d.profile?.name || '';
+        share.checked = d.shareStats !== false;
+    });
+    nameInput.addEventListener('change', () => chrome.storage.sync.set({ profile: { name: nameInput.value.trim() } }));
+    share.addEventListener('change', () => chrome.storage.sync.set({ shareStats: share.checked }));
+    chrome.storage.local.get('cartHistory', d => { document.getElementById('history-count').textContent = (d.cartHistory || []).length; });
+
+    const message = document.getElementById('fb-message');
+    const status = document.getElementById('fb-status');
+    const sendBtn = document.getElementById('fb-send');
+    sendBtn.addEventListener('click', async () => {
+        const text = message.value.trim();
+        if (text.length < 3) { status.textContent = 'כתבו כמה מילים לפני השליחה'; message.focus(); return; }
+        sendBtn.disabled = true;
+        status.textContent = 'שולח...';
+        // the public key may only add a row to this table; it cannot read what others wrote
+        const ok = await fetch(`${SUPABASE_URL}/rest/v1/feedback`, {
+            method: 'POST',
+            headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+            body: JSON.stringify({ message: text, contact: document.getElementById('fb-contact').value.trim() || null, ext_version: chrome.runtime.getManifest().version })
+        }).then(r => r.ok).catch(() => false);
+        sendBtn.disabled = false;
+        status.textContent = ok ? 'תודה! המשוב התקבל' : 'השליחה לא הצליחה. נסו שוב מאוחר יותר';
+        if (ok) message.value = '';
+    });
+    if (location.hash === '#feedback') message.focus(); // arriving from the popup's "שליחת משוב" link
+});

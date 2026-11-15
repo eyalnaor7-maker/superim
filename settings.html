@@ -15,6 +15,12 @@
         .container { max-width: 560px; margin: -32px auto 32px; padding: 0 14px; }
         .card { background: var(--card); border: 1px solid var(--ln); border-radius: 16px; box-shadow: var(--sh); padding: 18px; }
         .card h2 { font-size: 16px; margin-bottom: 14px; }
+        .card + .card { margin-top: 16px; }
+        textarea { width: 100%; padding: 10px; border: 1px solid var(--ln); border-radius: 10px; font: inherit; background: #fff; color: var(--tx); resize: vertical; }
+        textarea:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+        .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-weight: 500; }
+        .gap { margin-top: 12px; }
+        #fb-status { margin-top: 12px; text-align: center; font-weight: 600; }
         label { display: block; margin-bottom: 6px; font-weight: 500; }
         input[type="text"], select { width: 100%; padding: 10px; border: 1px solid var(--ln); border-radius: 10px; font: inherit; background: #fff; color: var(--tx); }
         input:focus-visible, select:focus-visible, .btn-save:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
@@ -79,8 +85,29 @@
                 <div id="statusMessage"></div>
             </form>
         </div>
+
+        <div class="card" id="profile">
+            <h2>הפרופיל שלי</h2>
+            <label for="profile-name">איך לקרוא לך?</label>
+            <input type="text" id="profile-name" maxlength="40" placeholder="שם פרטי (לא חובה)" autocomplete="given-name">
+            <div class="help-text">השם נשמר בדפדפן שלך בלבד ומשמש לברכה בחלון התוסף.</div>
+            <div class="help-text gap"><b id="history-count">0</b> סלים שמורים במחשב הזה. אפשר לחזור אליהם ולבנות אותם שוב מ"הסלים שלי" בחלון התוסף.</div>
+            <label class="check" for="share-stats"><input type="checkbox" id="share-stats" checked> לשתף נתונים אנונימיים לשיפור התוסף</label>
+            <div class="help-text">נשלחים רק סכומי הסל, הרשת הזולה, העיר ושמות המוצרים שהושוו. בלי שם, בלי מזהה אישי, ובלי קשר בין המוצרים לסל שלך.</div>
+        </div>
+
+        <div class="card" id="feedback">
+            <h2>משוב</h2>
+            <label for="fb-message">מה לא עבד? מה כדאי לשפר?</label>
+            <textarea id="fb-message" rows="4" maxlength="2000"></textarea>
+            <label class="gap" for="fb-contact">איך לחזור אליך? (לא חובה)</label>
+            <input type="text" id="fb-contact" maxlength="200" placeholder="אימייל או טלפון, רק אם רוצים תשובה" autocomplete="off">
+            <button type="button" class="btn-save" id="fb-send">לשלוח משוב</button>
+            <div id="fb-status" role="status" aria-live="polite"></div>
+        </div>
     </div>
 
+    <script src="supabase_config.js"></script>
     <script src="victory_match.js"></script>
     <script src="cities.js"></script>
     <script src="branch_service.js"></script>
