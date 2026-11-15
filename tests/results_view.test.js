@@ -51,3 +51,15 @@ test('store name is escaped', () => {
     assert.ok(html.includes('A&lt;b&gt;&amp;'));
     assert.ok(!html.includes('A<b>'));
 });
+
+test('a store missing products is compared only on the products it has', () => {
+    // cart of 3 at Victory costs 924.73; Shufersal has 1 product (14.70) that costs 16.70 at Victory
+    const list = [
+        { key: 'shufersal', name: 'שופרסל', total: 14.7, gap: 908.03, info: '', hasData: true },
+        { key: 'victory', name: 'ויקטורי', total: 924.73, gap: 0, info: '', hasData: true }
+    ];
+    const html = renderStoreSummary({ orderedStores: list, sortable: list, activeStore: 'victory', itemCount: 3 });
+    assert.ok(html.includes('₪2.00'));
+    assert.ok(!html.includes('910.03'));
+    assert.ok(!html.includes('% פחות')); // under 1% is not worth a badge
+});

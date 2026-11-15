@@ -87,9 +87,15 @@ function citySuggestions(cities, typed) {
 function branchesInCity(branches, city) {
     const t = normCity(String(city || '').split(' - ')[0]);
     if (!t) return branches;
-    const mentions = pick => branches.filter(b => pick(b).some(f => normCity(f).includes(t)));
-    const byPlace = mentions(b => [b.city, b.name, b.areas]);
-    return byPlace.length ? byPlace : mentions(b => [b.address]);
+    // a place must start with the city: "יבנה" is not "גן יבנה"
+    const byPlace = branches.filter(b => [b.city, b.name, ...String(b.areas || '').split(',')].some(f => normCity(f).startsWith(t)));
+    if (byPlace.length) return byPlace;
+    // in "street, town" the town must also start with the city; the street part may only mention it
+    return branches.filter(b => {
+        const parts = String(b.address || '').split(',');
+        const town = parts.length > 1 ? parts.pop() : '';
+        return normCity(town).startsWith(t) || parts.some(p => normCity(p).includes(t));
+    });
 }
 
 // Victory's branch list has no delivery areas. Its own site asks this endpoint which branch delivers to an address.
@@ -105,7 +111,7 @@ async function fetchVictoryDeliveryBranchId(city) {
             body: JSON.stringify({ city, street: '', houseNumber: '' })
         });
         id = branchFromDeliverySlots(await response.json());
-        victoryDeliveryCache.set(city, id);
+        if (response.ok) victoryDeliveryCache.set(city, id); // a rate-limit answer must not be remembered as "no delivery"
     } catch (error) {
         console.error('Error asking Victory which branch delivers to', city, error);
     }

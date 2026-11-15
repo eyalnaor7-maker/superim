@@ -22,6 +22,14 @@ test('branchesInCity matches city, name, address and delivery areas', () => {
     assert.deepStrictEqual(branchesInCity(all, ''), all);
 });
 
+test('branchesInCity: a city inside a longer place name does not match', () => {
+    const ganYavne = { name: 'גן-יבנה', city: 'גן-יבנה', address: 'הכישור 8, גן-יבנה', areas: '' };
+    const ashkelon = { name: 'אשקלון מרכז', city: 'אשקלון מרכז', address: 'יצחק בן צבי 48', areas: '' };
+    assert.deepStrictEqual(branchesInCity([ganYavne, ashkelon], 'יבנה'), []);
+    assert.deepStrictEqual(branchesInCity([ganYavne, ashkelon], 'גן יבנה'), [ganYavne]);
+    assert.deepStrictEqual(branchesInCity([ganYavne, ashkelon], 'אשקלון'), [ashkelon]);
+});
+
 test('branchesInCity: a street named after a city does not beat a branch in that city', () => {
     const motzkin = { name: 'מוצקין', city: 'קרית מוצקין', address: 'שד ירושלים 1 נווה גנים, קרית מוצקין', areas: '' };
     const malha = { name: 'מלחה', city: 'ירושלים', address: 'קניון מלחה, ירושלים', areas: '' };
