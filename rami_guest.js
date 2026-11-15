@@ -8,4 +8,18 @@ function mergeGuestCart(state, products, quantities) {
   cart.items = kept.concat(added);
   return next;
 }
-if (typeof module !== 'undefined') module.exports = { mergeGuestCart };
+
+// Turns the site's stored cart items into the popup's cart lines.
+// The site keeps the LINE total (after "2 for 115" style sales) in finalCart.FormatedTotalPrice / sumPrice,
+// and price.finalPrice is that same line total, not a unit price: multiplying it by the amount double counts.
+function ramiCartLines(items) {
+  return (Array.isArray(items) ? items : []).filter(i => i && !i.is_delivery && !String(i.name || '').includes('משלוח')).map(i => {
+    const quantity = parseFloat(i.amount || 1);
+    const p = i.price || {};
+    // a line the site has not priced yet (just injected) only has the catalog unit price
+    const total = i.finalCart?.FormatedTotalPrice ?? i.sumPrice ?? (parseFloat(p.price ?? p.finalPrice ?? 0) * quantity);
+    const available = i.isAvailable !== false;
+    return { code: String(i.id), name: i.name, quantity, rami_levy_total: available ? Number(total) || 0 : 0, outOfStock: !available };
+  });
+}
+if (typeof module !== 'undefined') module.exports = { mergeGuestCart, ramiCartLines };

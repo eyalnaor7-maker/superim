@@ -5,11 +5,14 @@ const MCK_RETAILER_ID = 1107;
 const MCK_APP_ID = 4;
 
 window.addEventListener('load', function () {
-    chrome.storage.local.get(['savedCartMCK'], function (result) {
-        if (result.savedCartMCK && result.savedCartMCK.length > 0) {
-            chrome.storage.local.remove(['savedCartMCK']);
-            transferCartToMCK(result.savedCartMCK);
+    chrome.storage.local.get(['savedCartMCK', 'savedCartMCKAt'], function (result) {
+        if (!result.savedCartMCK || result.savedCartMCK.length === 0) return;
+        // the cart waits through the bot check and the login page; after 30 minutes it is stale and dropped
+        if (Date.now() - (result.savedCartMCKAt || 0) > 30 * 60 * 1000) {
+            chrome.storage.local.remove(['savedCartMCK', 'savedCartMCKAt']);
+            return;
         }
+        transferCartToMCK(result.savedCartMCK);
     });
 });
 
@@ -76,6 +79,9 @@ async function transferCartToMCK(cartItems) {
         return;
     }
 
+    // logged in and a branch is known: from here the saved cart is used once
+    chrome.storage.local.remove(['savedCartMCK', 'savedCartMCKAt']);
+
     const headers = {
         "accept": "application/json, text/plain, */*",
         "content-type": "application/json;charset=UTF-8",
@@ -124,7 +130,7 @@ async function transferCartToMCK(cartItems) {
         });
 
         if (addResponse.ok || addResponse.status === 201) {
-            updateMCKStatus(`🎉 מדהים! ${successCount} מוצרים הועברו לעגלה שלך! מרענן...`);
+            updateMCKStatus(`🎉 ${successCount} מתוך ${cartItems.length} מוצרים הועברו לעגלה שלך! מרענן...`);
             setTimeout(() => window.location.reload(), 2000);
         } else {
             updateMCKStatus(`❌ השרת סירב לבקשה (שגיאה ${addResponse.status})`);

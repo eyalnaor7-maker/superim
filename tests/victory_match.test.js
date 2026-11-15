@@ -27,3 +27,18 @@ test('cityFromAddress takes text after last comma, else name', () => {
   assert.strictEqual(cityFromAddress('אפיקים 1, אופקים', 'אופקים'), 'אופקים');
   assert.strictEqual(cityFromAddress('', 'אשקלון מרכז'), 'אשקלון מרכז');
 });
+
+const { victorySaleTotal } = require('../victory_match.js');
+test('victorySaleTotal: "2 ב-₪110" applies per pair, up to maxQuantity uses', () => {
+  const sale = { name: '2 ב-₪110', isMaxSale: false, maxQuantity: 2 }; // shape seen on the live site 2026-11-15
+  assert.strictEqual(victorySaleTotal(69.9, 1, [sale]), 69.9);
+  assert.strictEqual(victorySaleTotal(69.9, 2, [sale]), 110);
+  assert.strictEqual(victorySaleTotal(69.9, 3, [sale]), 179.9);
+  assert.strictEqual(victorySaleTotal(69.9, 6, [sale]), 359.8); // only 2 uses
+});
+test('victorySaleTotal: plain sale price, and ignored sales', () => {
+  assert.strictEqual(victorySaleTotal(999, 1, [{ name: '₪899' }]), 899);
+  assert.strictEqual(victorySaleTotal(10, 2, [{ name: '2 ב-₪15', isMaxSale: true }]), 20);
+  assert.strictEqual(victorySaleTotal(10, 2, [{ name: 'השני ב-₪1' }]), 20);
+  assert.strictEqual(victorySaleTotal(10, 2, null), 20);
+});

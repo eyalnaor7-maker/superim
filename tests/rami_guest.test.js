@@ -20,3 +20,18 @@ test('does not mutate input', () => {
   mergeGuestCart(input, [{ id: 1 }, { id: 2 }], { 1: 2, 2: 1 });
   assert.strictEqual(JSON.stringify(input), snap);
 });
+
+const { ramiCartLines } = require('../rami_guest.js');
+test('ramiCartLines: a "2 for 115" line is 115, not finalPrice times amount', () => {
+  // shape copied from the live site, 2026-11-15
+  const nutrilon = { id: 266631, name: 'נוטרילון 3- 800 גרם', amount: 2, isAvailable: true, is_delivery: false, sumPrice: 115, finalPrice: 119.8,
+    price: { price: 59.9, finalPrice: 115, saleOldPrice: 119.8 }, finalCart: { FormatedTotalPrice: 115, quantity: 2 } };
+  const delivery = { id: 164854, name: 'מחיר משלוח', amount: 1, is_delivery: true, sumPrice: 35.9, price: { price: 35.9, finalPrice: 35.9 } };
+  assert.deepStrictEqual(ramiCartLines([nutrilon, delivery]),
+    [{ code: '266631', name: 'נוטרילון 3- 800 גרם', quantity: 2, rami_levy_total: 115, outOfStock: false }]);
+});
+test('ramiCartLines: unpriced line falls back to unit price times amount; unavailable is zero', () => {
+  assert.strictEqual(ramiCartLines([{ id: 1, name: 'a', amount: 3, price: { price: 5, finalPrice: 5 } }])[0].rami_levy_total, 15);
+  assert.strictEqual(ramiCartLines([{ id: 1, name: 'a', amount: 3, isAvailable: false, sumPrice: 15 }])[0].rami_levy_total, 0);
+  assert.deepStrictEqual(ramiCartLines(null), []);
+});

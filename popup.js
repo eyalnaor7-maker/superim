@@ -162,37 +162,12 @@ function scanShufersalCart() {
 }
 
 // ===== RAMI LEVY CART SCANNER =====
-async function scanRamiLevyCart() {
+// Runs in the Rami Levy tab and only hands back the stored cart; ramiCartLines (rami_guest.js) prices it.
+function scanRamiLevyCart() {
     try {
         const raw = localStorage.getItem('ramilevy') || sessionStorage.getItem('ramilevy');
-        if (!raw) {
-            console.warn('[Rami Levy Scanner] No ramilevy storage key found');
-            return [];
-        }
-        const parsed = JSON.parse(raw);
-        const items = parsed?.cart?.items;
-        if (!Array.isArray(items)) {
-            console.warn('[Rami Levy Scanner] No cart items array found in storage');
-            return [];
-        }
-
-        const products = [];
-        items.forEach(item => {
-            if (!item) return;
-            const name = item.name || '';
-            if (name.includes('משלוח') || name.toLowerCase().includes('delivery') || name.toLowerCase().includes('shipping')) return;
-            const quantity = parseFloat(item.amount || 1);
-            const price = parseFloat(item.price?.finalPrice || item.finalPrice || 0);
-            const isAvailable = item.isAvailable !== false;
-            products.push({
-                code: String(item.id),
-                name: item.name,
-                quantity: quantity,
-                rami_levy_total: isAvailable ? price * quantity : 0,
-                outOfStock: !isAvailable
-            });
-        });
-        return products;
+        const items = raw ? JSON.parse(raw)?.cart?.items : null;
+        return Array.isArray(items) ? items : [];
     } catch(e) {
         console.error('שגיאה בסריקת עגלת רמי לוי מהזיכרון:', e);
         return [];
@@ -730,6 +705,8 @@ async function agentVictoryAgent(items, settingsBranchId) {
                 finalTotal: outOfStock ? 0 : price * qty,
                 quantity: item.quantity,
                 outOfStock,
+                unitPrice: price,
+                sales: hit.sales || [], // priced in the popup by victorySaleTotal
                 retailerProductId: String(hit.id),
                 name: hit.name,
                 isWeight: !!hit.isWeight
@@ -1240,6 +1217,7 @@ async function compareCarts() {
             // מוודא שהסריקה עבדה ושהיא החזירה לנו מערך אמיתי
             if (scriptResults && scriptResults[0] && Array.isArray(scriptResults[0].result)) {
                 rawCartItems = scriptResults[0].result;
+                if (activeStore === 'ramiLevy') rawCartItems = ramiCartLines(rawCartItems);
             }
         } catch (err) {
             console.warn("שגיאת סריקה (כנראה עמוד שגוי):", err);
@@ -1590,7 +1568,8 @@ async function compareCarts() {
             try {
                 const agentResponse = await fetchInHiddenWindow('https://www.victoryonline.co.il', agentVictoryAgent, [itemsForVictory, (settings.userSettings?.victory?.platform === 2 && settings.userSettings.victory.branchId) || null], 3500);
                 if (agentResponse?.results) {
-                    victoryResults = agentResponse.results;
+                    // the search answer carries the unit price and the sale names ("2 ב-₪110"); the shopper pays the sale total
+                    victoryResults = agentResponse.results.map(r => r.outOfStock ? r : { ...r, finalTotal: victorySaleTotal(r.unitPrice, Number(r.quantity) || 1, r.sales) });
                     agentDebug = agentResponse.debug || null;
                 }
             } catch(e) {}
@@ -1866,7 +1845,12 @@ async function compareCarts() {
             let totalShufersal = 0, totalRamiLevy = 0, totalVictory = 0, totalMCK = 0;
             let shufersalCount = 0, ramiCount = 0, victoryCount = 0, mckCount = 0;
 
+            // gap per store: what the active store charges for the products that store has no price for
+            const gap = { shufersal: 0, ramiLevy: 0, victory: 0, machsaneiHashuk: 0 };
+            const activeField = { shufersal: 'shufersal_total', ramiLevy: 'rami_levy_total', victory: 'victory_total', machsaneiHashuk: 'mck_total' }[activeStore];
+
             const processItemForTotals = (item) => {
+                const activeTotal = item[activeField] || 0;
                 // Shufersal
                 if (activeStore === 'shufersal') {
                     totalShufersal += item.shufersal_total || 0;
@@ -1875,7 +1859,7 @@ async function compareCarts() {
                     if (item.shufersal_total !== null && item.shufersal_total !== undefined && item.shufersal_total > 0) {
                         totalShufersal += item.shufersal_total;
                         shufersalCount++;
-                    }
+                    } else gap.shufersal += activeTotal;
                 }
 
                 // Rami Levy
@@ -1886,7 +1870,7 @@ async function compareCarts() {
                     if (item.rami_levy_total !== null && item.rami_levy_total !== undefined && item.rami_levy_total > 0) {
                         totalRamiLevy += item.rami_levy_total;
                         ramiCount++;
-                    }
+                    } else gap.ramiLevy += activeTotal;
                 }
 
                 // Victory
@@ -1897,7 +1881,7 @@ async function compareCarts() {
                     if (item.victory_total !== null && item.victory_total !== undefined && item.victory_total > 0) {
                         totalVictory += item.victory_total;
                         victoryCount++;
-                    }
+                    } else gap.victory += activeTotal;
                 }
 
                 // Machsanei HaShuk
@@ -1908,7 +1892,7 @@ async function compareCarts() {
                     if (item.mck_total !== null && item.mck_total !== undefined && item.mck_total > 0) {
                         totalMCK += item.mck_total;
                         mckCount++;
-                    }
+                    } else gap.machsaneiHashuk += activeTotal;
                 }
             };
 
@@ -1931,9 +1915,9 @@ async function compareCarts() {
                 const shufersalComment = shufersalHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const shufersalInfo = isShufersalActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (shufersalCount === rawCartItems.length ? shufersalComment : `${shufersalComment} (${shufersalCount}/${rawCartItems.length} מוצרים)`);
+                    : (shufersalCount === rawCartItems.length ? shufersalComment : `${shufersalComment} · נמצאו ${shufersalCount} מתוך ${rawCartItems.length} מוצרים, ההשוואה רק עליהם`);
                 storesWithData.push({
-                    key: 'shufersal', name: shufersalDisplayName, total: totalShufersal,
+                    key: 'shufersal', name: shufersalDisplayName, total: totalShufersal, gap: gap.shufersal,
                     info: shufersalInfo, hasData: isShufersalActive ? true : (shufersalCount > 0)
                 });
             }
@@ -1943,9 +1927,9 @@ async function compareCarts() {
                 const ramiComment = ramiHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const ramiInfo = isRamiActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (ramiCount === rawCartItems.length ? ramiComment : `${ramiComment} (${ramiCount}/${rawCartItems.length} מוצרים)`);
+                    : (ramiCount === rawCartItems.length ? ramiComment : `${ramiComment} · נמצאו ${ramiCount} מתוך ${rawCartItems.length} מוצרים, ההשוואה רק עליהם`);
                 storesWithData.push({
-                    key: 'ramiLevy', name: ramiDisplayName, total: totalRamiLevy,
+                    key: 'ramiLevy', name: ramiDisplayName, total: totalRamiLevy, gap: gap.ramiLevy,
                     info: ramiInfo,
                     hasData: isRamiActive ? true : (ramiCount > 0)
                 });
@@ -1956,9 +1940,9 @@ async function compareCarts() {
                 const victoryComment = victoryHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const victoryInfo = isVictoryActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (victoryCount === rawCartItems.length ? victoryComment : `${victoryComment} (${victoryCount}/${rawCartItems.length} מוצרים)`);
+                    : (victoryCount === rawCartItems.length ? victoryComment : `${victoryComment} · נמצאו ${victoryCount} מתוך ${rawCartItems.length} מוצרים, ההשוואה רק עליהם`);
                 storesWithData.push({
-                    key: 'victory', name: victoryDisplayName, total: totalVictory,
+                    key: 'victory', name: victoryDisplayName, total: totalVictory, gap: gap.victory,
                     info: victoryInfo,
                     hasData: isVictoryActive ? true : (victoryCount > 0),
                     debugInfo: isVictoryActive ? null : (victoryResults.length === 0 ? (agentDebug?.blocked ? 'ויקטורי חסמה זמנית את הבדיקה' : 'מחירים לא נמצאו') : null)
@@ -1970,7 +1954,7 @@ async function compareCarts() {
                 const mckComment = mckHasDb ? 'כולל מחירים ממאגר הנתונים' : 'כל המחירים עודכנו בלייב מהאתר';
                 const mckInfo = isMCKActive 
                     ? 'הסופר הנוכחי שלך' 
-                    : (mckCount === rawCartItems.length ? mckComment : `${mckComment} (${mckCount}/${rawCartItems.length} מוצרים)`);
+                    : (mckCount === rawCartItems.length ? mckComment : `${mckComment} · נמצאו ${mckCount} מתוך ${rawCartItems.length} מוצרים, ההשוואה רק עליהם`);
                 const mckNeedsLogin = !isMCKActive && mckDebug?.needsLogin;
                 const mckLoginHint = 'התחברו לאתר מחסני השוק לקבלת מחיר עדכני';
                 const mckOldDates = [...inStockItems, ...outOfStockItems]
@@ -1978,14 +1962,14 @@ async function compareCarts() {
                     .map(i => new Date(i.mck_updated_at)).filter(d => !isNaN(d));
                 const mckOldDate = mckOldDates.length ? new Date(Math.max(...mckOldDates)).toLocaleDateString('he-IL') : '';
                 storesWithData.push({
-                    key: 'machsaneiHashuk', name: 'מחסני השוק', total: totalMCK,
+                    key: 'machsaneiHashuk', name: 'מחסני השוק', total: totalMCK, gap: gap.machsaneiHashuk,
                     info: mckNeedsLogin ? esc(`מחיר ישן${mckOldDate ? ` (${mckOldDate})` : ''} · ${mckLoginHint}`) : mckInfo,
                     hasData: isMCKActive ? true : (mckCount > 0),
                     debugInfo: isMCKActive ? null : (mckNeedsLogin ? mckLoginHint : (mckResults.length === 0 ? (mckDebug?.branchId ? 'מחירים לא נמצאו' : 'לא נמצא סניף') : null))
                 });
             }
 
-            const sortable = storesWithData.filter(s => s.hasData).sort((a, b) => a.total - b.total);
+            const sortable = storesWithData.filter(s => s.hasData).sort((a, b) => (a.total + a.gap) - (b.total + b.gap));
             const noData = storesWithData.filter(s => !s.hasData);
             const orderedStores = [...sortable, ...noData];
             const cheapest = sortable[0];
@@ -2206,7 +2190,7 @@ async function compareCarts() {
                         });
                     }
                 });
-                chrome.storage.local.set({ savedCartMCK: mckCart }, () => {
+                chrome.storage.local.set({ savedCartMCK: mckCart, savedCartMCKAt: Date.now() }, () => {
                     chrome.tabs.create({ url: 'https://www.mck.co.il' });
                 });
             });

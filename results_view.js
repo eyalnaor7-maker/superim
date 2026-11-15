@@ -13,9 +13,12 @@ const rvMoney = n => `₪${Number(n).toFixed(2)}`;
 const rvAvatar = s => `<span class="av" style="--c:${RV_COLORS[s.key] || '#64748b'}">${_rvEsc(String(s.name || '').charAt(0))}</span>`;
 
 function renderStoreSummary({ orderedStores, sortable, activeStore }) {
+    // gap = what the shopper pays today for the products this store lacks. Adding it compares like with like:
+    // a store that has 1 of 3 products is not "98% cheaper".
+    const cmp = s => s.total + (s.gap || 0);
     const winner = sortable[0];
     const active = sortable.find(s => s.key === activeStore);
-    const saving = winner && active ? active.total - winner.total : 0;
+    const saving = winner && active ? active.total - cmp(winner) : 0;
 
     let hero;
     if (!winner) {
@@ -23,7 +26,7 @@ function renderStoreSummary({ orderedStores, sortable, activeStore }) {
     } else if (active && saving > 0.01) {
         const pct = Math.round(saving / active.total * 100);
         hero = `<div class="lbl">החיסכון שלך בעגלה הזו</div><div class="big num">${rvMoney(saving)}</div>` +
-            `<span class="pill">${pct}% פחות מ${_rvEsc(active.name)}</span>`;
+            (pct >= 1 ? `<span class="pill">${pct}% פחות מ${_rvEsc(active.name)}</span>` : '');
     } else {
         hero = `<div class="lbl">${active ? 'העגלה שלך כבר הכי זולה' : 'הרשת הזולה ביותר'}</div><div class="big num">${rvMoney((active || winner).total)}</div>`;
     }
@@ -43,9 +46,9 @@ function renderStoreSummary({ orderedStores, sortable, activeStore }) {
         const isActive = s.key === activeStore;
         const sub = s.hasData
             ? `<div class="sub">${isActive ? 'העגלה הנוכחית שלך' : s.info}</div>`
-            : `<div class="warn">${_rvEsc(s.debugInfo || 'ממתין לנתונים...')}</div>`;
+            : `<div class="warn">${_rvEsc(s.debugInfo || 'לא נמצאו מחירים למוצרים בעגלה')}</div>`;
         const end = s.hasData
-            ? `<b class="num">${rvMoney(s.total)}</b><div class="diff num" dir="ltr">+${rvMoney(s.total - winner.total)}</div>`
+            ? `<b class="num">${rvMoney(s.total)}</b><div class="diff num" dir="ltr">+${rvMoney(cmp(s) - cmp(winner))}</div>`
             : '';
         const btn = isActive ? '' : `<button class="mini" id="${sw.id}">${s.hasData ? sw.go : sw.pick}</button>`;
         html += `<div class="row">${rvAvatar(s)}<div class="grow"><b>${_rvEsc(s.name)}</b>${sub}</div>` +
