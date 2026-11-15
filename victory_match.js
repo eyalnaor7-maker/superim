@@ -38,4 +38,18 @@ function victorySaleTotal(unitPrice, qty, sales) {
   });
   return Math.round(best * 100) / 100;
 }
-if (typeof module !== 'undefined') module.exports = { victorySaleTotal, normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress, branchFromDeliverySlots };
+// Victory's delivery-slots answer ({date: [slot]}) prices every slot. The fee the shopper meets is the cheapest slot
+// of the nearest day; `cheaper` points at a later day that costs less (0 = a free-delivery day).
+function victoryDeliveryFromSlots(json) {
+  if (!json || json.status !== 'success') return null;
+  const days = Object.keys(json.data || {}).sort().map(date => {
+    const slots = (json.data[date] || []).filter(s => s && Number.isFinite(Number(s.fee)));
+    if (!slots.length) return null;
+    const best = slots.reduce((a, b) => (Number(b.fee) < Number(a.fee) ? b : a));
+    return { date, fee: Number(best.fee), minOrder: Number(best.minOrder) || 0 };
+  }).filter(Boolean);
+  if (!days.length) return null;
+  const cheaper = days.slice(1).find(d => d.fee < days[0].fee) || null;
+  return { fee: days[0].fee, minOrder: days[0].minOrder, cheaper: cheaper && { fee: cheaper.fee, date: cheaper.date } };
+}
+if (typeof module !== 'undefined') module.exports = { victorySaleTotal, victoryDeliveryFromSlots, normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress, branchFromDeliverySlots };

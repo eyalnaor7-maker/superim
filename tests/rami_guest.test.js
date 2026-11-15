@@ -35,3 +35,11 @@ test('ramiCartLines: unpriced line falls back to unit price times amount; unavai
   assert.strictEqual(ramiCartLines([{ id: 1, name: 'a', amount: 3, isAvailable: false, sumPrice: 15 }])[0].rami_levy_total, 0);
   assert.deepStrictEqual(ramiCartLines(null), []);
 });
+
+const { ramiDeliveryFee } = require('../rami_guest.js');
+test('ramiDeliveryFee reads the delivery line, null when there is none', () => {
+  const delivery = { id: 164854, name: 'מחיר משלוח', is_delivery: true, sumPrice: 35.9, finalCart: { FormatedTotalPrice: 35.9, FormatedTotalPriceClub: 29.9 } };
+  assert.strictEqual(ramiDeliveryFee([{ id: 1, amount: 2 }, delivery]), 35.9);
+  assert.strictEqual(ramiDeliveryFee([{ id: 1, amount: 2 }]), null);
+  assert.strictEqual(ramiDeliveryFee(null), null);
+});

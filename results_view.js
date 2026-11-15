@@ -12,23 +12,36 @@ const RV_SWITCH = {
 const rvMoney = n => `₪${Number(n).toFixed(2)}`;
 const rvAvatar = s => `<span class="av" style="--c:${RV_COLORS[s.key] || '#64748b'}">${_rvEsc(String(s.name || '').charAt(0))}</span>`;
 
+// delivery = the fee the chain itself gave (0 = free). deliveryEst = stand-in for a chain that gave none:
+// the highest fee among the others, so a chain is never crowned cheapest just because its fee is unknown.
+const rvDelivery = s => s.delivery ?? s.deliveryEst ?? 0;
+const rvShownTotal = s => s.total + rvDelivery(s);
+const rvCompareTotal = s => rvShownTotal(s) + (s.gap || 0);
+function rvDeliveryLine(s) {
+    if (s.delivery == null && s.deliveryEst == null) return '<div class="sub">לא כולל דמי משלוח</div>';
+    const text = s.delivery == null ? `כולל הערכת דמי משלוח ${rvMoney(s.deliveryEst)} (הרשת לא מסרה מחיר)`
+        : s.delivery === 0 ? 'כולל משלוח חינם' : `כולל דמי משלוח ${rvMoney(s.delivery)}`;
+    return `<div class="sub">${text}${s.deliveryNote ? ' · ' + _rvEsc(s.deliveryNote) : ''}</div>`;
+}
+
 function renderStoreSummary({ orderedStores, sortable, activeStore }) {
     // gap = what the shopper pays today for the products this store lacks. Adding it compares like with like:
     // a store that has 1 of 3 products is not "98% cheaper".
-    const cmp = s => s.total + (s.gap || 0);
+    const cmp = rvCompareTotal;
     const winner = sortable[0];
     const active = sortable.find(s => s.key === activeStore);
-    const saving = winner && active ? active.total - cmp(winner) : 0;
+    const saving = winner && active ? cmp(active) - cmp(winner) : 0;
+    const withDelivery = sortable.some(s => s.delivery != null || s.deliveryEst != null);
 
     let hero;
     if (!winner) {
         hero = `<div class="lbl">לא נמצאו מחירים</div>`;
     } else if (active && saving > 0.01) {
-        const pct = Math.round(saving / active.total * 100);
-        hero = `<div class="lbl">החיסכון שלך בעגלה הזו</div><div class="big num">${rvMoney(saving)}</div>` +
+        const pct = Math.round(saving / rvShownTotal(active) * 100);
+        hero = `<div class="lbl">החיסכון שלך בעגלה הזו${withDelivery ? ', כולל דמי משלוח' : ''}</div><div class="big num">${rvMoney(saving)}</div>` +
             (pct >= 1 ? `<span class="pill">${pct}% פחות מ${_rvEsc(active.name)}</span>` : '');
     } else {
-        hero = `<div class="lbl">${active ? 'העגלה שלך כבר הכי זולה' : 'הרשת הזולה ביותר'}</div><div class="big num">${rvMoney((active || winner).total)}</div>`;
+        hero = `<div class="lbl">${active ? 'העגלה שלך כבר הכי זולה' : 'הרשת הזולה ביותר'}</div><div class="big num">${rvMoney(rvShownTotal(active || winner))}</div>`;
     }
 
     let html = `<div class="hero"><div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span></div>${hero}</div>`;
@@ -37,7 +50,7 @@ function renderStoreSummary({ orderedStores, sortable, activeStore }) {
         const cta = winner.key === activeStore ? '' :
             `<button class="cta" id="${RV_SWITCH[winner.key].id}">לבנות את העגלה ב${_rvEsc(winner.name)} ←</button>`;
         html += `<div class="win"><div class="row">${rvAvatar(winner)}<div class="grow"><b>${_rvEsc(winner.name)}</b>` +
-            `<div class="sub">${winner.info}</div></div><b class="num tot">${rvMoney(winner.total)}</b></div>${cta}</div>`;
+            `<div class="sub">${winner.info}</div>${rvDeliveryLine(winner)}</div><b class="num tot">${rvMoney(rvShownTotal(winner))}</b></div>${cta}</div>`;
     }
 
     html += '<div class="list">';
@@ -45,10 +58,10 @@ function renderStoreSummary({ orderedStores, sortable, activeStore }) {
         const sw = RV_SWITCH[s.key];
         const isActive = s.key === activeStore;
         const sub = s.hasData
-            ? `<div class="sub">${isActive ? 'העגלה הנוכחית שלך' : s.info}</div>`
+            ? `<div class="sub">${isActive ? 'העגלה הנוכחית שלך' : s.info}</div>${rvDeliveryLine(s)}`
             : `<div class="warn">${_rvEsc(s.debugInfo || 'לא נמצאו מחירים למוצרים בעגלה')}</div>`;
         const end = s.hasData
-            ? `<b class="num">${rvMoney(s.total)}</b><div class="diff num" dir="ltr">+${rvMoney(cmp(s) - cmp(winner))}</div>`
+            ? `<b class="num">${rvMoney(rvShownTotal(s))}</b><div class="diff num" dir="ltr">+${rvMoney(cmp(s) - cmp(winner))}</div>`
             : '';
         const btn = isActive ? '' : `<button class="mini" id="${sw.id}">${s.hasData ? sw.go : sw.pick}</button>`;
         html += `<div class="row">${rvAvatar(s)}<div class="grow"><b>${_rvEsc(s.name)}</b>${sub}</div>` +
@@ -83,4 +96,4 @@ function renderHistory(list) {
         (list.length ? `<button class="mini" id="historyClear">מחיקת כל הסלים</button>` : '') + `</div></div>`;
 }
 
-if (typeof module !== 'undefined') module.exports = { renderStoreSummary, addToHistory, renderHistory };
+if (typeof module !== 'undefined') module.exports = { renderStoreSummary, addToHistory, renderHistory, rvCompareTotal, rvShownTotal };
