@@ -57,4 +57,30 @@ function renderStoreSummary({ orderedStores, sortable, activeStore }) {
     return html + '<div class="row"><button class="mini" id="compareAgain">להשוות שוב</button></div></div>';
 }
 
-if (typeof module !== 'undefined') module.exports = { renderStoreSummary };
+const RV_NAMES = { shufersal: 'שופרסל', ramiLevy: 'רמי לוי', victory: 'ויקטורי', machsaneiHashuk: 'מחסני השוק' };
+
+// Saved carts: newest first, at most 20. Comparing the same cart again replaces its entry instead of adding one.
+function addToHistory(list, entry) {
+    const sig = e => e.store + '|' + (e.items || []).map(i => `${i.code || i.shufersal_code}x${i.quantity}`).sort().join(',');
+    return [entry, ...(list || []).filter(e => sig(e) !== sig(entry))].slice(0, 20);
+}
+
+function renderHistory(list) {
+    let html = `<div class="hero s"><div class="top"><span class="brand"><svg class="ic"><use href="#i-cart"/></svg>השוואת עגלות</span></div>` +
+        `<div class="big">הסלים שלי</div></div><div class="list">`;
+    if (!list.length) html += `<div class="sub c">עוד אין סלים שמורים. כל השוואה נשמרת כאן אוטומטית, במחשב הזה בלבד.</div>`;
+    list.forEach((e, i) => {
+        const date = new Date(e.at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: '2-digit' });
+        const best = Object.entries(e.totals || {}).sort((a, b) => a[1] - b[1])[0];
+        const names = (e.items || []).map(it => it.name).filter(Boolean).join(', ');
+        html += `<div class="hist"><b>${_rvEsc(date)} · ${_rvEsc(RV_NAMES[e.store] || '')} · ${(e.items || []).length === 1 ? 'מוצר אחד' : (e.items || []).length + ' מוצרים'}</b>` +
+            (best ? `<div class="sub">הכי זול היה ב${_rvEsc(RV_NAMES[best[0]] || '')}: <span class="num">${rvMoney(best[1])}</span></div>` : '') +
+            `<div class="names">${_rvEsc(names)}</div><div class="btns"><span>לבנות שוב ב:</span>` +
+            Object.keys(RV_NAMES).map(k => `<button class="mini" data-build="${k}" data-i="${i}">${RV_NAMES[k]}</button>`).join('') +
+            `</div></div>`;
+    });
+    return html + `<div class="row"><button class="mini" id="historyBack">חזרה</button>` +
+        (list.length ? `<button class="mini" id="historyClear">מחיקת כל הסלים</button>` : '') + `</div></div>`;
+}
+
+if (typeof module !== 'undefined') module.exports = { renderStoreSummary, addToHistory, renderHistory };

@@ -63,3 +63,21 @@ test('a store missing products is compared only on the products it has', () => {
     assert.ok(!html.includes('910.03'));
     assert.ok(!html.includes('% פחות')); // under 1% is not worth a badge
 });
+
+const { addToHistory, renderHistory } = require('../results_view.js');
+test('addToHistory: newest first, same cart replaces itself, capped at 20', () => {
+    const cart = (store, qty, at) => ({ at, store, totals: {}, items: [{ shufersal_code: 'P_1', quantity: qty }] });
+    let list = addToHistory([], cart('victory', 1, 1));
+    list = addToHistory(list, cart('victory', 2, 2));
+    list = addToHistory(list, cart('victory', 1, 3)); // the first cart again
+    assert.deepStrictEqual(list.map(e => e.at), [3, 2]);
+    for (let i = 0; i < 30; i++) list = addToHistory(list, cart('shufersal', 100 + i, 10 + i));
+    assert.strictEqual(list.length, 20);
+});
+test('renderHistory: escapes names, offers every chain, empty state', () => {
+    const html = renderHistory([{ at: 0, store: 'ramiLevy', totals: { victory: 110, ramiLevy: 115 }, items: [{ name: '<b>x</b>', quantity: 2 }] }]);
+    assert.ok(html.includes('&lt;b&gt;x&lt;/b&gt;') && !html.includes('<b>x</b>'));
+    assert.ok(html.includes('הכי זול היה בויקטורי') && html.includes('₪110.00'));
+    assert.strictEqual(html.split('data-build=').length - 1, 4);
+    assert.ok(renderHistory([]).includes('עוד אין סלים שמורים'));
+});
