@@ -120,21 +120,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function fetchInHiddenWindow(url, func, args = []) {
     const tab = await createHiddenTab(url);
     try {
-        // wait until the tab really is on the chain's site (not a fixed guess), then let the page settle
+        // wait until the tab is on the chain's site and has finished loading (or has been there 6s: some pages never settle)
         const origin = new URL(url).origin;
-        for (let i = 0; i < 75; i++) {
+        let arrivedAt = 0;
+        for (let i = 0; i < 100; i++) {
             const t = await chrome.tabs.get(tab.id).catch(() => null);
-            if (!t || String(t.url || '').startsWith(origin)) break;
+            if (!t) break;
+            const there = String(t.url || '').startsWith(origin);
+            if (there && !arrivedAt) arrivedAt = Date.now();
+            if (there && (t.status === 'complete' || Date.now() - arrivedAt > 6000)) break;
             await sleep(200);
         }
-        await sleep(1200);
-        const results = await chrome.scripting.executeScript({ 
-            target: { tabId: tab.id }, 
-            world: 'MAIN',
-            func, 
-            args 
-        });
-        return results[0].result;
+        await sleep(600);
+        // a page that reloads under the script (a redirect, a bot check) gives no answer: try once more
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func, args }).catch(() => null);
+            if (results?.[0]?.result != null) return results[0].result;
+            await sleep(1500);
+        }
+        return null;
     } finally {
         chrome.tabs.remove(tab.id);
     }
@@ -714,6 +718,15 @@ async function agentShufersalAgent(items) {
     // the header of the site's own page states the delivery charge; by now the hidden tab has had time to load it
     const fee = document.body?.textContent.match(/דמי שירות במשלוח\s*([\d.]+)/);
     if (fee) debug.deliveryFee = parseFloat(fee[1]);
+    // read only: the slots for the address the shopper already saved on the site, each with its price. {} when none.
+    try {
+        const r = await fetch('/online/he/timeSlot/preselection/getHomeDeliverySlots?amount=1.0&prescription=false');
+        const slots = r.ok ? await r.json() : {};
+        debug.slotFees = Object.fromEntries(Object.entries(slots || {}).map(([day, list]) => [
+            day.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'),
+            (Array.isArray(list) ? list : []).filter(x => x && x.selectable !== false).map(x => x.price && x.price.value)
+        ]));
+    } catch (e) { }
     return { results, debug };
 }
 
@@ -1272,6 +1285,7 @@ async function compareCarts() {
         statusDiv.innerHTML = `סורק עגלה מ${activeStoreName}...`;
 
         const delivery = {}; // store key -> { fee, note, minOrder }: what delivery costs there, as the chain itself states it
+        const slotDays = {}; // store key -> deliveryFromDays(): the fee per delivery day, where the chain gives it
         let rawCartItems = [];
         try {
             const scriptResults = await chrome.scripting.executeScript({
@@ -1289,11 +1303,22 @@ async function compareCarts() {
                     rawCartItems = ramiCartLines(rawCartItems);
                 }
                 if (activeStore === 'shufersal') {
-                    const feeResult = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: () => {
+                    const feeResult = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: async () => {
                         const m = document.body.textContent.match(/דמי שירות במשלוח\s*([\d.]+)/);
-                        return m ? parseFloat(m[1]) : null;
+                        let slotFees = {};
+                        try {
+                            const r = await fetch('/online/he/timeSlot/preselection/getHomeDeliverySlots?amount=1.0&prescription=false');
+                            const slots = r.ok ? await r.json() : {};
+                            slotFees = Object.fromEntries(Object.entries(slots || {}).map(([day, list]) => [
+                                day.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'),
+                                (Array.isArray(list) ? list : []).filter(x => x && x.selectable !== false).map(x => x.price && x.price.value)
+                            ]));
+                        } catch (e) { }
+                        return { fee: m ? parseFloat(m[1]) : null, slotFees };
                     } });
-                    if (feeResult?.[0]?.result != null) delivery.shufersal = { fee: feeResult[0].result };
+                    const sh = feeResult?.[0]?.result;
+                    if (sh?.fee != null) delivery.shufersal = { fee: sh.fee };
+                    slotDays.shufersal = deliveryFromDays(sh?.slotFees);
                 }
             }
         } catch (err) {
@@ -1628,6 +1653,7 @@ async function compareCarts() {
             const r = await fetchInHiddenWindow('https://www.shufersal.co.il/online/he/', agentShufersalAgent, [itemsForShufersal]);
             if (r?.results) { shufersalResults = r.results; shufersalDebug = r.debug || null; }
             if (r?.debug?.deliveryFee != null) delivery.shufersal = { fee: r.debug.deliveryFee };
+            slotDays.shufersal = deliveryFromDays(r?.debug?.slotFees);
         });
         if (activeStore !== 'ramiLevy' && compareRamiLevy && itemsForRamiLevy.length > 0) ask(async () => {
             const r = await fetchInHiddenWindow('https://www.rami-levy.co.il/he', agentInsideCartEngine, [itemsForRamiLevy, us.ramiLevy?.branchId || null]);
@@ -1635,7 +1661,7 @@ async function compareCarts() {
             if (r?.delivery != null) delivery.ramiLevy = { fee: r.delivery };
         });
         // Victory prices every delivery slot for a city, so a free-delivery day shows up here
-        const { savedCity } = await chrome.storage.sync.get('savedCity');
+        const { savedCity, savedStreet } = await chrome.storage.sync.get(['savedCity', 'savedStreet']);
         if ((activeStore === 'victory' || compareVictory) && savedCity) ask(async () => {
             const resp = await fetch('https://api.victoryonline.co.il/api/web/delivery-slots', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1643,8 +1669,21 @@ async function compareCarts() {
             });
             const d = resp.ok ? victoryDeliveryFromSlots(await resp.json()) : null;
             if (!d) return;
-            const day = d.cheaper && new Date(d.cheaper.date).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' });
-            delivery.victory = { fee: d.fee, minOrder: d.minOrder, note: !d.cheaper ? '' : (d.cheaper.fee === 0 ? `משלוח חינם ב${day}` : `משלוח ב-₪${d.cheaper.fee} ב${day}`) };
+            slotDays.victory = d;
+            delivery.victory = { fee: d.fee, minOrder: d.minOrder };
+        });
+        // Rami Levy prices its slots only for a full address: the same two requests its own delivery dialog sends
+        if ((activeStore === 'ramiLevy' || compareRamiLevy) && savedCity && savedStreet) ask(async () => {
+            const cities = await fetch(`https://www.rami-levy.co.il/api/address-autocomplete/city?q=${encodeURIComponent(savedCity)}`).then(r => r.json());
+            const city = (cities?.data || []).find(c => c.city_name === savedCity) || cities?.data?.[0];
+            if (!city) return;
+            const json = await fetch('https://www-api.rami-levy.co.il/api/v2/site/supply/get-supply-date', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ only_area_availability: false, city_id: city.city_id, street_name: savedStreet, user_id: null, name: null, email: null, city: city.city_name, street: savedStreet, showStreet: 1 })
+            }).then(r => r.json());
+            if (json?.status !== 200) return;
+            slotDays.ramiLevy = deliveryFromDays(Object.fromEntries(Object.entries(json.data || {}).map(([date, slots]) =>
+                [date, (slots || []).filter(x => x && x.active !== false).map(x => x.deliveryCost)])));
         });
         if (activeStore !== 'victory' && compareVictory && itemsForVictory.length > 0) ask(async () => {
             const r = await fetchInHiddenWindow('https://www.victoryonline.co.il', agentVictoryAgent, [itemsForVictory, (us.victory?.platform === 2 && us.victory.branchId) || null]);
@@ -1660,6 +1699,12 @@ async function compareCarts() {
         });
         if (jobs.length) statusDiv.textContent = 'בודק מחירים ודמי משלוח ברשתות במקביל...';
         await Promise.all(jobs);
+        // where a chain priced its delivery days, that is the fee; a later cheaper or free day becomes a note
+        Object.entries(slotDays).forEach(([key, d]) => {
+            if (!d) return;
+            const day = d.cheaper && new Date(d.cheaper.date).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' });
+            delivery[key] = { ...delivery[key], fee: d.fee, note: !d.cheaper ? '' : (d.cheaper.fee === 0 ? `משלוח חינם ב${day}` : `משלוח ב-₪${d.cheaper.fee} ב${day}`) };
+        });
 
         // 6. Classify matched items
         const inStockItems = [];
@@ -1895,6 +1940,8 @@ async function compareCarts() {
         // ===== RENDER FUNCTION =====
         function renderUI() {
             console.log("=== renderUI: Debug Cart Details ===");
+            console.log("delivery:", JSON.stringify(delivery), "per day:", JSON.stringify(slotDays));
+            console.log("chain answers:", JSON.stringify({ victory: agentDebug, mck: mckDebug, shufersal: shufersalResults.length, ramiLevy: ramiLevyResults.length }));
             console.log("inStockItems:", JSON.parse(JSON.stringify(inStockItems)));
             console.log("missingItems:", JSON.parse(JSON.stringify(missingItems)));
 

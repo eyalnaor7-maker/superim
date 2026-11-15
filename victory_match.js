@@ -38,18 +38,24 @@ function victorySaleTotal(unitPrice, qty, sales) {
   });
   return Math.round(best * 100) / 100;
 }
-// Victory's delivery-slots answer ({date: [slot]}) prices every slot. The fee the shopper meets is the cheapest slot
-// of the nearest day; `cheaper` points at a later day that costs less (0 = a free-delivery day).
-function victoryDeliveryFromSlots(json) {
-  if (!json || json.status !== 'success') return null;
-  const days = Object.keys(json.data || {}).sort().map(date => {
-    const slots = (json.data[date] || []).filter(s => s && Number.isFinite(Number(s.fee)));
-    if (!slots.length) return null;
-    const best = slots.reduce((a, b) => (Number(b.fee) < Number(a.fee) ? b : a));
-    return { date, fee: Number(best.fee), minOrder: Number(best.minOrder) || 0 };
+// feesByDate: {"2026-11-16": [35.9, 29.9], ...}, the delivery fee of every slot on every day a chain offers.
+// The fee the shopper meets is the cheapest slot of the nearest day; `cheaper` points at a later day that costs
+// less (fee 0 = a free-delivery day). Used for Victory, Rami Levy and Shufersal.
+function deliveryFromDays(feesByDate) {
+  const days = Object.keys(feesByDate || {}).sort().map(date => {
+    const fees = (feesByDate[date] || []).filter(f => f != null).map(Number).filter(Number.isFinite);
+    return fees.length ? { date, fee: Math.min(...fees) } : null;
   }).filter(Boolean);
   if (!days.length) return null;
-  const cheaper = days.slice(1).find(d => d.fee < days[0].fee) || null;
-  return { fee: days[0].fee, minOrder: days[0].minOrder, cheaper: cheaper && { fee: cheaper.fee, date: cheaper.date } };
+  return { fee: days[0].fee, cheaper: days.slice(1).find(d => d.fee < days[0].fee) || null };
 }
-if (typeof module !== 'undefined') module.exports = { victorySaleTotal, victoryDeliveryFromSlots, normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress, branchFromDeliverySlots };
+// Victory's delivery-slots answer is {date: [slot]}; a slot carries fee and minOrder.
+function victoryDeliveryFromSlots(json) {
+  if (!json || json.status !== 'success') return null;
+  const data = json.data || {};
+  const d = deliveryFromDays(Object.fromEntries(Object.entries(data).map(([date, slots]) => [date, (slots || []).map(x => x && x.fee)])));
+  if (!d) return null;
+  const first = Object.keys(data).sort().map(k => (data[k] || [])[0]).find(Boolean);
+  return { ...d, minOrder: Number(first && first.minOrder) || 0 };
+}
+if (typeof module !== 'undefined') module.exports = { victorySaleTotal, victoryDeliveryFromSlots, deliveryFromDays, normalizeBarcode, pickExactHit, barcodeFromImage, cityFromAddress, branchFromDeliverySlots };

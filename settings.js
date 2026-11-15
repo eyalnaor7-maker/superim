@@ -89,8 +89,9 @@ async function suggestVictoryDeliveryBranch(city) {
 }
 
 function loadSavedSettings() {
-    chrome.storage.sync.get(['userSettings', 'savedCity'], (data) => {
+    chrome.storage.sync.get(['userSettings', 'savedCity', 'savedStreet'], (data) => {
         const userSettings = data.userSettings || {};
+        document.getElementById('street-input').value = data.savedStreet || '';
 
         if (data.savedCity) {
             document.getElementById('city-input').value = data.savedCity;
@@ -143,7 +144,7 @@ function saveSettings() {
         }
     };
 
-    chrome.storage.sync.set({ userSettings: userSettings, savedCity: city }, () => {
+    chrome.storage.sync.set({ userSettings: userSettings, savedCity: city, savedStreet: document.getElementById('street-input').value.trim() }, () => {
         const status = document.getElementById('statusMessage');
         status.textContent = 'ההגדרות נשמרו';
         status.className = 'status-success';
