@@ -609,7 +609,8 @@ async function agentInsideCartEngine(itemsList, settingsStoreId) {
             (data?.items || []).forEach(ci => {
                 cartItemsMap[String(ci.id)] = ci;
             });
-            return itemsList.map(item => {
+            const deliveryLine = (data?.items || []).find(ci => ci.is_delivery); // the site adds its delivery charge as a cart line
+            return { delivery: deliveryLine ? Number(deliveryLine.FormatedTotalPrice) : null, results: itemsList.map(item => {
                 const ci = cartItemsMap[item.id];
                 const isOutOfStock = !ci;
                 return {
@@ -618,19 +619,19 @@ async function agentInsideCartEngine(itemsList, settingsStoreId) {
                     quantity: ci ? ci.quantity : item.quantity,
                     outOfStock: isOutOfStock
                 };
-            });
+            }) };
         }
     } catch(e) {
         console.error("Cart API failed", e);
     }
 
     // Fallback if cart request failed: return all as out of stock
-    return itemsList.map(item => ({
+    return { delivery: null, results: itemsList.map(item => ({
         id: item.id,
         finalTotal: 0,
         quantity: item.quantity,
         outOfStock: true
-    }));
+    })) };
 }
 
 // ===== SHUFERSAL AGENT (runs inside hidden Shufersal window) =====
@@ -710,6 +711,9 @@ async function agentShufersalAgent(items) {
             results.push({ barcode, outOfStock: true });
         }
     }
+    // the header of the site's own page states the delivery charge; by now the hidden tab has had time to load it
+    const fee = document.body?.textContent.match(/דמי שירות במשלוח\s*([\d.]+)/);
+    if (fee) debug.deliveryFee = parseFloat(fee[1]);
     return { results, debug };
 }
 
@@ -1267,6 +1271,7 @@ async function compareCarts() {
         // 1. Scan active cart עם חליפת מגן
         statusDiv.innerHTML = `סורק עגלה מ${activeStoreName}...`;
 
+        const delivery = {}; // store key -> { fee, note, minOrder }: what delivery costs there, as the chain itself states it
         let rawCartItems = [];
         try {
             const scriptResults = await chrome.scripting.executeScript({
@@ -1278,7 +1283,18 @@ async function compareCarts() {
             // מוודא שהסריקה עבדה ושהיא החזירה לנו מערך אמיתי
             if (scriptResults && scriptResults[0] && Array.isArray(scriptResults[0].result)) {
                 rawCartItems = scriptResults[0].result;
-                if (activeStore === 'ramiLevy') rawCartItems = ramiCartLines(rawCartItems);
+                if (activeStore === 'ramiLevy') {
+                    const fee = ramiDeliveryFee(rawCartItems);
+                    if (fee != null) delivery.ramiLevy = { fee };
+                    rawCartItems = ramiCartLines(rawCartItems);
+                }
+                if (activeStore === 'shufersal') {
+                    const feeResult = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: () => {
+                        const m = document.body.textContent.match(/דמי שירות במשלוח\s*([\d.]+)/);
+                        return m ? parseFloat(m[1]) : null;
+                    } });
+                    if (feeResult?.[0]?.result != null) delivery.shufersal = { fee: feeResult[0].result };
+                }
             }
         } catch (err) {
             console.warn("שגיאת סריקה (כנראה עמוד שגוי):", err);
@@ -1611,9 +1627,24 @@ async function compareCarts() {
         if (activeStore !== 'shufersal' && compareShufersal && itemsForShufersal.length > 0) ask(async () => {
             const r = await fetchInHiddenWindow('https://www.shufersal.co.il/online/he/', agentShufersalAgent, [itemsForShufersal]);
             if (r?.results) { shufersalResults = r.results; shufersalDebug = r.debug || null; }
+            if (r?.debug?.deliveryFee != null) delivery.shufersal = { fee: r.debug.deliveryFee };
         });
         if (activeStore !== 'ramiLevy' && compareRamiLevy && itemsForRamiLevy.length > 0) ask(async () => {
-            ramiLevyResults = await fetchInHiddenWindow('https://www.rami-levy.co.il/he', agentInsideCartEngine, [itemsForRamiLevy, us.ramiLevy?.branchId || null]) || [];
+            const r = await fetchInHiddenWindow('https://www.rami-levy.co.il/he', agentInsideCartEngine, [itemsForRamiLevy, us.ramiLevy?.branchId || null]);
+            ramiLevyResults = r?.results || [];
+            if (r?.delivery != null) delivery.ramiLevy = { fee: r.delivery };
+        });
+        // Victory prices every delivery slot for a city, so a free-delivery day shows up here
+        const { savedCity } = await chrome.storage.sync.get('savedCity');
+        if ((activeStore === 'victory' || compareVictory) && savedCity) ask(async () => {
+            const resp = await fetch('https://api.victoryonline.co.il/api/web/delivery-slots', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ city: savedCity, street: '', houseNumber: '' })
+            });
+            const d = resp.ok ? victoryDeliveryFromSlots(await resp.json()) : null;
+            if (!d) return;
+            const day = d.cheaper && new Date(d.cheaper.date).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' });
+            delivery.victory = { fee: d.fee, minOrder: d.minOrder, note: !d.cheaper ? '' : (d.cheaper.fee === 0 ? `משלוח חינם ב${day}` : `משלוח ב-₪${d.cheaper.fee} ב${day}`) };
         });
         if (activeStore !== 'victory' && compareVictory && itemsForVictory.length > 0) ask(async () => {
             const r = await fetchInHiddenWindow('https://www.victoryonline.co.il', agentVictoryAgent, [itemsForVictory, (us.victory?.platform === 2 && us.victory.branchId) || null]);
@@ -1627,7 +1658,7 @@ async function compareCarts() {
             const r = await fetchInHiddenWindow('https://www.mck.co.il', agentMCKAgent, [itemsForMCK, us.machsaneiHashuk?.branchId || null]);
             if (r?.results) { mckResults = r.results; mckDebug = r.debug || null; }
         });
-        if (jobs.length) statusDiv.textContent = `בודק מחירים ב-${jobs.length} רשתות במקביל...`;
+        if (jobs.length) statusDiv.textContent = 'בודק מחירים ודמי משלוח ברשתות במקביל...';
         await Promise.all(jobs);
 
         // 6. Classify matched items
@@ -2009,7 +2040,14 @@ async function compareCarts() {
                 });
             }
 
-            const sortable = storesWithData.filter(s => s.hasData).sort((a, b) => (a.total + a.gap) - (b.total + b.gap));
+            storesWithData.forEach(st => {
+                const d = delivery[st.key];
+                st.delivery = d?.fee ?? null;
+                st.deliveryNote = [d?.note, d?.minOrder && st.total < d.minOrder ? `מינימום הזמנה ₪${d.minOrder}` : ''].filter(Boolean).join(' · ');
+            });
+            const knownFees = storesWithData.filter(s => s.hasData && s.delivery != null).map(s => s.delivery);
+            if (knownFees.length) storesWithData.forEach(st => { if (st.delivery == null) st.deliveryEst = Math.max(...knownFees); });
+            const sortable = storesWithData.filter(s => s.hasData).sort((a, b) => rvCompareTotal(a) - rvCompareTotal(b));
             const noData = storesWithData.filter(s => !s.hasData);
             const orderedStores = [...sortable, ...noData];
             const cheapest = sortable[0];
@@ -2147,7 +2185,7 @@ async function compareCarts() {
                 cheapest_store: cheapest ? cheapest.key : activeStore,
                 cart_size: rawCartItems.length,
                 matched_count: matchedItems.length,
-                saving: cheapest && activeEntry ? Math.max(0, Number((activeEntry.total - cheapest.total - cheapest.gap).toFixed(2))) : 0,
+                saving: cheapest && activeEntry ? Math.max(0, Number((rvCompareTotal(activeEntry) - rvCompareTotal(cheapest)).toFixed(2))) : 0,
                 totals: Object.fromEntries(sortable.map(st => [st.key, Number(st.total.toFixed(2))])),
                 // product names only feed "most compared products" counters; they are never stored as one cart
                 products: matchedItems.map(i => ({ barcode: i.shufersal_code.replace('P_', ''), name: i.name }))
@@ -2167,7 +2205,7 @@ async function compareCarts() {
             Object.entries(RV_SWITCH).forEach(([storeKey, sw]) => {
                 document.getElementById(sw.id)?.addEventListener('click', () => { logEvent({ type: 'switch', store: storeKey }); sendCartTo(storeKey, allSources); });
             });
-            saveCartToHistory(activeStore, allSources, Object.fromEntries(sortable.map(st => [st.key, Number(st.total.toFixed(2))])));
+            saveCartToHistory(activeStore, allSources, Object.fromEntries(sortable.map(st => [st.key, Number(rvShownTotal(st).toFixed(2))])));
 
             compareBtn.disabled = false;
         }

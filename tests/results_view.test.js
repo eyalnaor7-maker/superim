@@ -81,3 +81,26 @@ test('renderHistory: escapes names, offers every chain, empty state', () => {
     assert.strictEqual(html.split('data-build=').length - 1, 4);
     assert.ok(renderHistory([]).includes('עוד אין סלים שמורים'));
 });
+
+test('delivery fees are part of the totals, the ranking and the labels', () => {
+    // products alone: victory 100 < ramiLevy 110. With delivery (victory 35.9, ramiLevy free) ramiLevy wins.
+    const list = [
+        { key: 'ramiLevy', name: 'רמי לוי', total: 110, gap: 0, delivery: 0, info: '', hasData: true },
+        { key: 'victory', name: 'ויקטורי', total: 100, gap: 0, delivery: 35.9, deliveryNote: 'משלוח חינם ביום שלישי', info: '', hasData: true },
+        { key: 'machsaneiHashuk', name: 'מחסני השוק', total: 105, gap: 0, delivery: null, deliveryEst: 35.9, info: '', hasData: true }
+    ];
+    const { rvCompareTotal } = require('../results_view.js');
+    const sortable = [...list].sort((a, b) => rvCompareTotal(a) - rvCompareTotal(b));
+    assert.deepStrictEqual(sortable.map(s => s.key), ['ramiLevy', 'victory', 'machsaneiHashuk']);
+    const html = renderStoreSummary({ orderedStores: sortable, sortable, activeStore: 'victory', itemCount: 3 });
+    assert.ok(html.includes('כולל דמי משלוח</div>') || html.includes(', כולל דמי משלוח'));
+    assert.ok(html.includes('₪25.90'));                      // saving: 135.90 - 110
+    assert.ok(html.includes('כולל משלוח חינם'));
+    assert.ok(html.includes('₪135.90') && html.includes('כולל דמי משלוח ₪35.90 · משלוח חינם ביום שלישי'));
+    assert.ok(html.includes('₪140.90') && html.includes('כולל הערכת דמי משלוח ₪35.90'));
+});
+test('no chain gave a delivery fee: totals stay product-only and say so', () => {
+    const list = [{ key: 'victory', name: 'ויקטורי', total: 100, gap: 0, info: '', hasData: true }, { key: 'shufersal', name: 'שופרסל', total: 120, gap: 0, info: '', hasData: true }];
+    const html = renderStoreSummary({ orderedStores: list, sortable: list, activeStore: 'shufersal', itemCount: 1 });
+    assert.ok(html.includes('₪20.00') && html.includes('לא כולל דמי משלוח') && !html.includes(', כולל דמי משלוח'));
+});

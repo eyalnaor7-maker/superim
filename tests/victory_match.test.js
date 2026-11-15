@@ -42,3 +42,14 @@ test('victorySaleTotal: plain sale price, and ignored sales', () => {
   assert.strictEqual(victorySaleTotal(10, 2, [{ name: 'השני ב-₪1' }]), 20);
   assert.strictEqual(victorySaleTotal(10, 2, null), 20);
 });
+
+const { victoryDeliveryFromSlots } = require('../victory_match.js');
+test('victoryDeliveryFromSlots: nearest day fee, and a later free-delivery day', () => {
+  const slot = (date, fee) => ({ id: '1', date, hours: '10:00-12:00', fee, minOrder: 250, branchId: '26' }); // live shape 2026-11-15
+  const json = { status: 'success', data: { '2026-11-17': [slot('2026-11-17', 0)], '2026-11-16': [slot('2026-11-16', 35.9), slot('2026-11-16', 29.9)] } };
+  assert.deepStrictEqual(victoryDeliveryFromSlots(json), { fee: 29.9, minOrder: 250, cheaper: { fee: 0, date: '2026-11-17' } });
+  const flat = { status: 'success', data: { '2026-11-16': [slot('2026-11-16', 35.9)], '2026-11-17': [slot('2026-11-17', 35.9)] } };
+  assert.deepStrictEqual(victoryDeliveryFromSlots(flat), { fee: 35.9, minOrder: 250, cheaper: null });
+  assert.strictEqual(victoryDeliveryFromSlots({ status: 'success', data: {} }), null);
+  assert.strictEqual(victoryDeliveryFromSlots({ status: 'error' }), null);
+});

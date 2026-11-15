@@ -22,4 +22,10 @@ function ramiCartLines(items) {
     return { code: String(i.id), name: i.name, quantity, rami_levy_total: available ? Number(total) || 0 : 0, outOfStock: !available };
   });
 }
-if (typeof module !== 'undefined') module.exports = { mergeGuestCart, ramiCartLines };
+// The site keeps the delivery charge as a cart line marked is_delivery. Null when the cart has none.
+function ramiDeliveryFee(items) {
+  const d = (Array.isArray(items) ? items : []).find(i => i && i.is_delivery);
+  const fee = d ? Number(d.finalCart?.FormatedTotalPrice ?? d.sumPrice ?? d.price?.price) : NaN;
+  return Number.isFinite(fee) ? fee : null;
+}
+if (typeof module !== 'undefined') module.exports = { mergeGuestCart, ramiCartLines, ramiDeliveryFee };
