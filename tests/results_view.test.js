@@ -104,3 +104,12 @@ test('no chain gave a delivery fee: totals stay product-only and say so', () => 
     const html = renderStoreSummary({ orderedStores: list, sortable: list, activeStore: 'shufersal', itemCount: 1 });
     assert.ok(html.includes('₪20.00') && html.includes('לא כולל דמי משלוח') && !html.includes(', כולל דמי משלוח'));
 });
+
+test('renderHistory: a cart with its scanned lines can be opened and compared now', () => {
+    const html = renderHistory([{ at: 0, store: 'ramiLevy', totals: { ramiLevy: 182.7 }, items: [], raw: [{ code: '1', name: 'חלב', quantity: 2 }, { code: '2', name: 'לחם', quantity: 1 }] }]);
+    assert.ok(html.includes('הורכב ברמי לוי · 2 מוצרים'));
+    assert.ok(html.includes('aria-expanded="false"') && html.includes('id="hist-0" hidden'));
+    assert.ok(html.includes('<span>חלב</span><span class="num">x2</span>'));
+    assert.strictEqual(html.split('data-restore="0"').length - 1, 1);
+    assert.ok(!renderHistory([{ at: 0, store: 'victory', totals: {}, items: [{ name: 'a', quantity: 1 }] }]).includes('data-restore')); // carts saved before 2026-11-16
+});

@@ -2,118 +2,146 @@
 <html dir="rtl" lang="he">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>הגדרות — השוואת עגלות</title>
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
     <style>
-        :root { --bg:#f8fafc; --tx:#0f172a; --sub:#64748b; --ln:#e8edf3; --card:#fff;
+        :root { --bg:#f8fafc; --tx:#0f172a; --sub:#475569; --ln:#cbd5e1; --soft:#e8edf3; --card:#fff;
             --hero:linear-gradient(140deg,#064e3b,#047857 55%,#10b981);
             --cta:linear-gradient(180deg,#fcd34d,#f59e0b); --ctx:#422006; --csh:0 6px 16px -4px rgba(245,158,11,.55);
-            --sh:0 10px 30px -10px rgba(6,78,59,.35); --ok:#047857; }
+            --sh:0 10px 30px -10px rgba(6,78,59,.35); --ok:#047857; --bad:#b91c1c; }
         * { box-sizing: border-box; margin: 0; }
-        body { font-family: system-ui, 'Segoe UI', Arial, sans-serif; font-size: 14px; line-height: 1.45; background: var(--bg); color: var(--tx); }
+        body { font-family: system-ui, 'Segoe UI', Arial, sans-serif; font-size: 15px; line-height: 1.5; background: var(--bg); color: var(--tx); }
         .band { background: var(--hero); color: #fff; padding: 28px 20px 56px; }
-        .band h1 { max-width: 560px; margin: 0 auto; font-size: 24px; font-weight: 700; }
-        .container { max-width: 560px; margin: -32px auto 32px; padding: 0 14px; }
-        .card { background: var(--card); border: 1px solid var(--ln); border-radius: 16px; box-shadow: var(--sh); padding: 18px; }
-        .card h2 { font-size: 16px; margin-bottom: 14px; }
-        .card + .card { margin-top: 16px; }
-        textarea { width: 100%; padding: 10px; border: 1px solid var(--ln); border-radius: 10px; font: inherit; background: #fff; color: var(--tx); resize: vertical; }
-        textarea:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
-        .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-weight: 500; }
-        .gap { margin-top: 12px; }
-        #fb-status { margin-top: 12px; text-align: center; font-weight: 600; }
-        label { display: block; margin-bottom: 6px; font-weight: 500; }
-        input[type="text"], select { width: 100%; padding: 10px; border: 1px solid var(--ln); border-radius: 10px; font: inherit; background: #fff; color: var(--tx); }
-        input:focus-visible, select:focus-visible, .btn-save:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
-        .help-text { font-size: 12px; color: var(--sub); margin-top: 4px; }
-        .city { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--ln); }
-        .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--ln); }
+        .band h1 { max-width: 600px; margin: 0 auto; font-size: 26px; font-weight: 700; }
+        .band p { max-width: 600px; margin: 4px auto 0; font-size: 14px; opacity: .95; }
+        .container { max-width: 600px; margin: -32px auto 40px; padding: 0 14px; }
+        .card { background: var(--card); border: 1px solid var(--soft); border-radius: 16px; box-shadow: var(--sh); padding: 22px 20px; }
+        .card + .card { margin-top: 20px; }
+        .card h2 { font-size: 18px; margin-bottom: 4px; }
+        .lead { color: var(--sub); margin-bottom: 16px; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; }
+        input[type="text"], select, textarea { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #94a3b8; border-radius: 10px; font: inherit; background: #fff; color: var(--tx); }
+        textarea { resize: vertical; }
+        ::placeholder { color: #64748b; opacity: 1; }
+        input:disabled { background: #f1f5f9; border-color: var(--ln); color: var(--sub); cursor: not-allowed; }
+        :focus-visible { outline: 3px solid var(--ok); outline-offset: 2px; }
+        .help-text { font-size: 13px; color: var(--sub); margin-top: 4px; }
+        .field + .field { margin-top: 16px; }
+        #map { height: 220px; margin-top: 16px; border: 1px solid var(--ln); border-radius: 12px; position: relative; z-index: 0; }
+        #map .leaflet-control-attribution a { color: #0b5f8a; }
+        #map-msg { min-height: 20px; margin-top: 6px; font-size: 13px; color: var(--sub); }
+        .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--soft); }
         .row:last-of-type { border-bottom: 0; }
         .av { width: 38px; height: 38px; border-radius: 12px; background: var(--c); color: #fff; font-weight: 700; font-size: 17px; display: grid; place-items: center; flex: none; }
-        .name { width: 78px; font-weight: 600; flex: none; }
+        .row label { width: 84px; margin: 0; flex: none; }
         .row select { flex: 1; min-width: 0; }
-        .btn-save { display: block; width: 100%; height: 46px; margin-top: 14px; border: 0; border-radius: 12px; background: var(--cta); color: var(--ctx); box-shadow: var(--csh); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
-        #statusMessage { margin-top: 12px; text-align: center; font-weight: 600; padding: 10px; border-radius: 10px; display: none; }
+        .btn { display: block; width: 100%; min-height: 48px; margin-top: 16px; border: 0; border-radius: 12px; background: var(--cta); color: var(--ctx); box-shadow: var(--csh); font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; }
+        .btn:disabled { opacity: .6; cursor: not-allowed; }
+        .check { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; margin: 16px 0 0; font-weight: 600; cursor: pointer; }
+        .check input { width: 22px; height: 22px; margin: 1px 0 0; flex: none; accent-color: var(--ok); }
+        .status { margin-top: 12px; text-align: center; font-weight: 600; border-radius: 10px; }
+        .status:not(:empty) { padding: 10px; }
         .status-success { background: #ecfdf5; color: var(--ok); }
-        .loading-spinner { text-align: center; color: var(--sub); }
+        .status-info { color: var(--sub); }
+        .loading-spinner { text-align: center; color: var(--sub); padding: 12px 0 20px; }
+        @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
     </style>
 </head>
 <body>
-    <div class="band"><h1>הגדרות</h1></div>
-    <div class="container">
-        <div class="card">
-            <h2>איפה קונים</h2>
+    <div class="band"><h1>הגדרות</h1><p>כאן קובעים איפה אתם גרים ומאיזה סניפים להשוות מחירים.</p></div>
+    <main class="container">
+        <div id="loading" class="loading-spinner" role="status">טוען סניפים מהרשתות...</div>
 
-            <div id="loading" class="loading-spinner">טוען סניפים מהרשתות...</div>
-
-            <div class="city" id="location-section" style="display: none;">
-                <label for="city-input">באיזו עיר קונים?</label>
-                <input type="text" id="city-input" list="city-list" placeholder="התחילו להקליד שם של עיר" autocomplete="off">
+        <section class="card" id="location-section" aria-labelledby="h-address" style="display: none;">
+            <h2 id="h-address">איפה אתם גרים</h2>
+            <p class="lead">העיר קובעת אילו סניפים יוצעו לכם. הרחוב משמש לבדיקת דמי משלוח.</p>
+            <div class="field">
+                <label for="city-input">עיר</label>
+                <input type="text" id="city-input" list="city-list" placeholder="התחילו להקליד שם של עיר" autocomplete="off" aria-describedby="city-help">
                 <datalist id="city-list"></datalist>
-                <div class="help-text">העיר מסננת את רשימות הסניפים למטה.</div>
-                <label class="gap" for="street-input">רחוב (לא חובה)</label>
-                <input type="text" id="street-input" maxlength="60" placeholder="שם הרחוב בלבד, בלי מספר בית" autocomplete="address-line1">
-                <div class="help-text">עם רחוב אפשר לבדוק ברמי לוי כמה עולה המשלוח בכל יום, ולזהות יום עם משלוח חינם. הרחוב נשמר בדפדפן שלך ונשלח רק לאתר רמי לוי.</div>
+                <div class="help-text" id="city-help">בחרו עיר מהרשימה שנפתחת.</div>
             </div>
+            <div class="field">
+                <label for="street-input">רחוב (לא חובה)</label>
+                <input type="text" id="street-input" list="street-list" maxlength="60" placeholder="שם הרחוב בלבד, בלי מספר בית" autocomplete="off" disabled aria-describedby="street-hint">
+                <datalist id="street-list"></datalist>
+                <div class="help-text" id="street-hint">קודם בוחרים עיר.</div>
+            </div>
+            <div id="map" dir="ltr" role="group" aria-label="מפה, לא חובה. אפשר ללחוץ עליה כדי לבחור כתובת"></div>
+            <div id="map-msg" role="status" aria-live="polite"></div>
+        </section>
 
-            <form id="settings-form" style="display: none;">
-                <div class="row">
-                    <span class="av" style="--c:#e11d48">ש</span>
-                    <label class="name" for="shufersal-branch">שופרסל</label>
-                    <select id="shufersal-branch" data-network="shufersal">
-                        <option value="">-- בחר סניף --</option>
-                    </select>
-                </div>
-                <div class="row">
-                    <span class="av" style="--c:#2563eb">ר</span>
-                    <label class="name" for="rami-levy-branch">רמי לוי</label>
-                    <select id="rami-levy-branch" data-network="rami_levy">
-                        <option value="">-- בחר סניף --</option>
-                    </select>
-                </div>
-                <div class="row">
-                    <span class="av" style="--c:#f97316">ו</span>
-                    <label class="name" for="victory-branch">ויקטורי</label>
-                    <select id="victory-branch" data-network="victory">
-                        <option value="">-- בחר סניף --</option>
-                    </select>
-                </div>
-                <div class="row">
-                    <span class="av" style="--c:#7c3aed">מ</span>
-                    <label class="name" for="mck-branch">מחסני השוק</label>
-                    <select id="mck-branch" data-network="machsanei_hashuk">
-                        <option value="">-- בחר סניף --</option>
-                    </select>
-                </div>
-                <button type="button" class="btn-save" id="save-btn">לשמור</button>
-                <div id="statusMessage"></div>
-            </form>
-        </div>
+        <form class="card" id="settings-form" aria-labelledby="h-branches" style="display: none;">
+            <h2 id="h-branches">הסניפים שלכם</h2>
+            <p class="lead">הסניפים נבחרים אוטומטית לפי העיר. אפשר לשנות כל סניף ידנית.</p>
+            <div class="row">
+                <span class="av" style="--c:#be123c" aria-hidden="true">ש</span>
+                <label for="shufersal-branch">שופרסל</label>
+                <select id="shufersal-branch" data-network="shufersal">
+                    <option value="">-- בחר סניף --</option>
+                </select>
+            </div>
+            <div class="row">
+                <span class="av" style="--c:#1d4ed8" aria-hidden="true">ר</span>
+                <label for="rami-levy-branch">רמי לוי</label>
+                <select id="rami-levy-branch" data-network="rami_levy">
+                    <option value="">-- בחר סניף --</option>
+                </select>
+            </div>
+            <div class="row">
+                <span class="av" style="--c:#c2410c" aria-hidden="true">ו</span>
+                <label for="victory-branch">ויקטורי</label>
+                <select id="victory-branch" data-network="victory">
+                    <option value="">-- בחר סניף --</option>
+                </select>
+            </div>
+            <div class="row">
+                <span class="av" style="--c:#6d28d9" aria-hidden="true">מ</span>
+                <label for="mck-branch">מחסני השוק</label>
+                <select id="mck-branch" data-network="machsanei_hashuk">
+                    <option value="">-- בחר סניף --</option>
+                </select>
+            </div>
+            <button type="button" class="btn" id="save-btn">שמירת כתובת וסניפים</button>
+            <div id="statusMessage" class="status" role="status" aria-live="polite"></div>
+        </form>
 
-        <div class="card" id="profile">
-            <h2>הפרופיל שלי</h2>
+        <section class="card" id="profile" aria-labelledby="h-profile">
+            <h2 id="h-profile">הפרופיל שלי</h2>
+            <p class="lead">השינויים כאן נשמרים מיד, בלי כפתור.</p>
             <label for="profile-name">איך לקרוא לך?</label>
-            <input type="text" id="profile-name" maxlength="40" placeholder="שם פרטי (לא חובה)" autocomplete="given-name">
-            <div class="help-text">השם נשמר בדפדפן שלך בלבד ומשמש לברכה בחלון התוסף.</div>
-            <div class="help-text gap"><b id="history-count">0</b> סלים שמורים במחשב הזה. אפשר לחזור אליהם ולבנות אותם שוב מ"הסלים שלי" בחלון התוסף.</div>
-            <label class="check" for="share-stats"><input type="checkbox" id="share-stats" checked> לשתף נתונים אנונימיים לשיפור התוסף</label>
-            <div class="help-text">נשלחים רק סכומי הסל, הרשת הזולה, העיר ושמות המוצרים שהושוו. בלי שם, בלי מזהה אישי, ובלי קשר בין המוצרים לסל שלך.</div>
-        </div>
+            <input type="text" id="profile-name" maxlength="40" placeholder="שם פרטי (לא חובה)" autocomplete="given-name" aria-describedby="name-help">
+            <div class="help-text" id="name-help">השם נשמר בדפדפן שלך בלבד ומשמש לברכה בחלון התוסף.</div>
+            <p class="help-text" style="margin-top:16px"><b id="history-count">0</b> סלים שמורים במחשב הזה. אפשר לחזור אליהם מ"הסלים שלי" בחלון התוסף.</p>
+        </section>
 
-        <div class="card" id="feedback">
-            <h2>משוב</h2>
+        <section class="card" id="privacy" aria-labelledby="h-privacy">
+            <h2 id="h-privacy">פרטיות</h2>
+            <label class="check" for="share-stats"><input type="checkbox" id="share-stats" checked aria-describedby="stats-help"> לשתף נתונים אנונימיים לשיפור התוסף</label>
+            <div class="help-text" id="stats-help">נשלחים רק סכומי הסל, הרשת הזולה, העיר ושמות המוצרים שהושוו. בלי שם, בלי מזהה אישי, ובלי קשר בין המוצרים לסל שלך.</div>
+            <p class="help-text" style="margin-top:12px">הרחוב נשמר בדפדפן שלך ונשלח רק לרמי לוי (בדיקת משלוח) ולמפה של OpenStreetMap (איתור על המפה).</p>
+            <div id="auto-status" class="status status-success" role="status" aria-live="polite"></div>
+        </section>
+
+        <section class="card" id="feedback" aria-labelledby="h-feedback">
+            <h2 id="h-feedback">משוב</h2>
+            <p class="lead">יש בעיה או רעיון? נשמח לשמוע.</p>
             <label for="fb-message">מה לא עבד? מה כדאי לשפר?</label>
             <textarea id="fb-message" rows="4" maxlength="2000"></textarea>
-            <label class="gap" for="fb-contact">איך לחזור אליך? (לא חובה)</label>
+            <label for="fb-contact" style="margin-top:16px">איך לחזור אליך? (לא חובה)</label>
             <input type="text" id="fb-contact" maxlength="200" placeholder="אימייל או טלפון, רק אם רוצים תשובה" autocomplete="off">
-            <button type="button" class="btn-save" id="fb-send">לשלוח משוב</button>
-            <div id="fb-status" role="status" aria-live="polite"></div>
-        </div>
-    </div>
+            <button type="button" class="btn" id="fb-send">שליחת משוב</button>
+            <div id="fb-status" class="status" role="status" aria-live="polite"></div>
+        </section>
+    </main>
 
     <script src="supabase_config.js"></script>
     <script src="victory_match.js"></script>
     <script src="cities.js"></script>
     <script src="branch_service.js"></script>
+    <script src="address.js"></script>
+    <script src="vendor/leaflet/leaflet.js"></script>
     <script src="settings.js"></script>
 </body>
 </html>
