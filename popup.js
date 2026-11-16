@@ -64,7 +64,7 @@ async function fetchSubstituteDetails(substituteBarcodes, headers) {
 
 
 // ===== CHROME HELPERS =====
-// The popup can be detached into its own window (popup.html?tabId=N) so the shopper can move it off the cart.
+// The extension runs in its own window (popup.html?tabId=N, opened by background.js) so the shopper can move it off the cart.
 const DETACHED_TAB_ID = Number(new URLSearchParams(location.search).get('tabId')) || null;
 let targetWindowId = null; // the browser window of the store tab: new tabs must open there, not in the detached window
 
@@ -84,27 +84,8 @@ function openTab(url, active = true) {
     return chrome.tabs.create({ url, active, ...(targetWindowId ? { windowId: targetWindowId } : {}) });
 }
 
-async function popOut() {
-    const tab = await getTargetTab();
-    const { winPos } = await chrome.storage.local.get('winPos');
-    const base = { url: `popup.html?tabId=${tab ? tab.id : ''}`, type: 'popup', width: 378, height: 660 };
-    // a remembered position on a screen that is no longer connected is refused: open at the default place instead
-    await chrome.windows.create({ ...base, ...(winPos || {}) }).catch(() => chrome.windows.create(base));
-    await chrome.storage.local.set({ detached: true });
-    window.close();
-}
-
-async function initWindowMode() {
-    const btn = document.getElementById('popoutBtn');
-    if (!DETACHED_TAB_ID) {
-        if ((await chrome.storage.local.get('detached')).detached) return popOut(); // the shopper chose the movable window last time
-        btn.addEventListener('click', popOut);
-        return;
-    }
-    document.body.classList.add('detached');
-    btn.title = 'חזרה לחלונית הרגילה של התוסף';
-    btn.setAttribute('aria-label', btn.title);
-    btn.addEventListener('click', async () => { await chrome.storage.local.set({ detached: false }); window.close(); });
+// The window remembers where the shopper put it; background.js opens the next one at the same place.
+async function rememberWindowPosition() {
     const me = await chrome.windows.getCurrent();
     chrome.windows.onBoundsChanged.addListener(w => {
         if (w.id === me.id) chrome.storage.local.set({ winPos: { left: w.left, top: w.top } });
@@ -656,56 +637,19 @@ async function agentShufersalAgent(items) {
             const parser = new DOMParser();
             const doc = parser.parseFromString(htmlText, 'text/html');
 
-            // 1. Try search results list item matching the barcode
-            let card = doc.querySelector(`li[data-product-code="${q}"]`) || 
-                       doc.querySelector(`li[data-product-code="${barcode}"]`) ||
-                       doc.querySelector(`article.miglog-incart[data-product-code="${q}"]`) ||
-                       doc.querySelector(`article.miglog-incart[data-product-code="${barcode}"]`) ||
-                       doc.querySelector('li.miglog-prod') ||
-                       doc.querySelector('article.miglog-incart');
-
-            if (card) {
-                const priceElem = card.querySelector('.miglog-prod-totalPrize') ||
-                                  card.querySelector('.miglog-prod-totalPrice') ||
-                                  card.querySelector('.price') ||
-                                  card.querySelector('.total-price') ||
-                                  card.querySelector('.price-number');
-                if (priceElem) {
-                    const priceText = priceElem.innerText.replace(/[^\d.]/g, '');
-                    let price = parseFloat(priceText) || 0;
-
-                    const discountElem = card.querySelector('.miglog-prod-totalDiscount') || card.querySelector('.discount');
-                    if (discountElem) {
-                        const discount = parseFloat(discountElem.innerText.replace(/[^\d.]/g, '')) || 0;
-                        price = price - discount;
-                    }
-
-                    results.push({
-                        barcode,
-                        price,
-                        finalTotal: price * item.quantity,
-                        outOfStock: price <= 0
-                    });
-                    continue;
-                }
-            }
-
-            // 2. Try single product page details (if redirected)
-            const priceElem = doc.querySelector('.product-price') || 
-                              doc.querySelector('.sp-price') || 
-                              doc.querySelector('.price') ||
-                              doc.querySelector('.price-number') ||
-                              doc.querySelector('.current-price');
+            // Only the result card of this exact barcode counts. Any looser match (the first product on the page,
+            // a cart line, a bare ".price") picked up unrelated numbers such as the shopper's own cart total.
+            const card = doc.querySelector(`li[data-product-code="${q}"]`) || doc.querySelector(`li[data-product-code="${barcode}"]`);
+            const priceElem = card && (card.querySelector('.miglog-prod-totalPrize') ||
+                                       card.querySelector('.miglog-prod-totalPrice') ||
+                                       card.querySelector('.price') ||
+                                       card.querySelector('.total-price') ||
+                                       card.querySelector('.price-number'));
             if (priceElem) {
-                const priceText = priceElem.innerText.replace(/[^\d.]/g, '');
-                let price = parseFloat(priceText) || 0;
-                
-                results.push({
-                    barcode,
-                    price,
-                    finalTotal: price * item.quantity,
-                    outOfStock: price <= 0
-                });
+                let price = parseFloat(priceElem.innerText.replace(/[^\d.]/g, '')) || 0;
+                const discountElem = card.querySelector('.miglog-prod-totalDiscount') || card.querySelector('.discount');
+                if (discountElem) price -= parseFloat(discountElem.innerText.replace(/[^\d.]/g, '')) || 0;
+                results.push({ barcode, price, finalTotal: price * item.quantity, outOfStock: price <= 0 });
                 continue;
             }
 
@@ -1234,7 +1178,10 @@ async function initSettings() {
 }
 
 // ===== MAIN COMPARISON FLOW =====
-async function compareCarts() {
+// Called with nothing: scans the cart in the store tab. Called with a cart from "הסלים שלי": compares that cart
+// in every chain with live prices and scans no tab (there is then no "active" store).
+async function compareCarts(saved) {
+    saved = saved && Array.isArray(saved.raw) ? saved : null; // a button click passes its event here
     const statusDiv = document.getElementById('status');
     const resultDiv = document.getElementById('result');
     const compareBtn = document.getElementById('compareBtn');
@@ -1259,14 +1206,15 @@ async function compareCarts() {
 
         const tab = await getTargetTab();
 
-        if (!tab) {
+        if (!tab && !saved) {
             throw new Error("לא נמצאה לשונית פעילה. נסה לרענן את העמוד.");
         }
 
-        const currentUrl = tab.url || '';
+        const currentUrl = tab?.url || '';
 
         // ★ זיהוי זירה ★
-        const activeStore = detectActiveStore(currentUrl);
+        const activeStore = saved ? null : detectActiveStore(currentUrl);
+        const codeStore = saved ? saved.store : activeStore; // the chain whose product codes the cart lines carry
         let activeStoreName = 'שופרסל';
         let scanFunc = scanShufersalCart;
 
@@ -1282,12 +1230,13 @@ async function compareCarts() {
         }
 
         // 1. Scan active cart עם חליפת מגן
-        statusDiv.innerHTML = `סורק עגלה מ${activeStoreName}...`;
+        statusDiv.textContent = saved ? 'טוען את הסל השמור...' : `סורק עגלה מ${activeStoreName}...`;
 
         const delivery = {}; // store key -> { fee, note, minOrder }: what delivery costs there, as the chain itself states it
         const slotDays = {}; // store key -> deliveryFromDays(): the fee per delivery day, where the chain gives it
-        let rawCartItems = [];
-        try {
+        // a saved cart brings only what was bought; its old prices are not reused
+        let rawCartItems = saved ? saved.raw.map(({ code, name, quantity }) => ({ code, name, quantity })) : [];
+        if (!saved) try {
             const scriptResults = await chrome.scripting.executeScript({
                 target: { tabId: tab.id },
                 world: 'MAIN',
@@ -1345,7 +1294,7 @@ async function compareCarts() {
                 "Content-Type": "application/json"
             };
 
-            if (activeStore === 'shufersal') {
+            if (codeStore === 'shufersal') {
                 // שופרסל: data-product-code מחזיר ברקוד אמיתי (P_xxx) ולא store_code פנימי
                 // לכן מחפשים לפי barcode ישירות בטבלת products
                 const barcodesList = [];
@@ -1396,7 +1345,7 @@ async function compareCarts() {
                 } catch (err) {
                     console.error("שגיאה בפנייה ל-Supabase (shufersal):", err);
                 }
-            } else if (activeStore === 'ramiLevy') {
+            } else if (codeStore === 'ramiLevy') {
                 const dbQueryCodes = [];
                 codes.forEach(c => {
                     dbQueryCodes.push(c);
@@ -1447,7 +1396,7 @@ async function compareCarts() {
                 } catch (err) {
                     console.error("שגיאה בפנייה ל-Supabase (ramiLevy):", err);
                 }
-            } else if (activeStore === 'victory' || activeStore === 'machsaneiHashuk') {
+            } else if (codeStore === 'victory' || codeStore === 'machsaneiHashuk') {
                 const barcodesList = codes.map(c => c.startsWith('P_') ? c : `P_${c}`);
                 const queryParams = new URLSearchParams({
                     select: 'barcode,name,store_products(store_name,store_code,price,updated_at),substitutes!substitutes_original_barcode_fkey(substitute_barcode_1,substitute_barcode_2)',
@@ -1513,12 +1462,12 @@ async function compareCarts() {
             let cleanBarcode = '';
             let shufersalCode = '';
 
-            if (activeStore === 'ramiLevy') {
+            if (codeStore === 'ramiLevy') {
                 const reverseMatch = findShufersalDataByRamiLevy(item.code, pricesData);
                 if (reverseMatch) {
                     shufersalCode = reverseMatch.shufersal_code;
                     cleanBarcode = shufersalCode.replace('P_', '');
-                    dbItem = reverseMatch;
+                    dbItem = { ...reverseMatch, rami_levy_code: item.code }; // the cart line's own code is the Rami Levy id
                 }
             } else {
                 shufersalCode = item.code;
@@ -1703,7 +1652,7 @@ async function compareCarts() {
         Object.entries(slotDays).forEach(([key, d]) => {
             if (!d) return;
             const day = d.cheaper && new Date(d.cheaper.date).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' });
-            delivery[key] = { ...delivery[key], fee: d.fee, note: !d.cheaper ? '' : (d.cheaper.fee === 0 ? `משלוח חינם ב${day}` : `משלוח ב-₪${d.cheaper.fee} ב${day}`) };
+            delivery[key] = { ...delivery[key], fee: d.fee, note: !d.cheaper ? '' : (d.cheaper.fee === 0 ? `משלוח חינם ב${day}` : `משלוח ב-₪${d.cheaper.fee.toFixed(2)} ב${day}`) };
         });
 
         // 6. Classify matched items
@@ -1968,7 +1917,9 @@ async function compareCarts() {
             const activeField = { shufersal: 'shufersal_total', ramiLevy: 'rami_levy_total', victory: 'victory_total', machsaneiHashuk: 'mck_total' }[activeStore];
 
             const processItemForTotals = (item) => {
-                const activeTotal = item[activeField] || 0;
+                // what this product costs the shopper today; a saved cart has no live cart, so its cheapest known price
+                const known = [item.shufersal_total, item.rami_levy_total, item.victory_total, item.mck_total].filter(v => v > 0);
+                const activeTotal = activeStore ? (item[activeField] || 0) : (known.length ? Math.min(...known) : 0);
                 // Shufersal
                 if (activeStore === 'shufersal') {
                     totalShufersal += item.shufersal_total || 0;
@@ -2099,7 +2050,8 @@ async function compareCarts() {
             const orderedStores = [...sortable, ...noData];
             const cheapest = sortable[0];
 
-            let html = renderStoreSummary({ orderedStores, sortable, activeStore, itemCount: rawCartItems.length });
+            const savedLabel = saved ? `${RV_NAMES[saved.store] || ''}, ${new Date(saved.at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: '2-digit' })}` : '';
+            let html = renderStoreSummary({ orderedStores, sortable, activeStore, savedLabel, itemCount: rawCartItems.length });
 
             // Split inStockItems into available (no replacements) and replaced (replacements in at least one store)
             const availableItems = [];
@@ -2226,7 +2178,7 @@ async function compareCarts() {
             statusDiv.innerHTML = 'סיימנו';
 
             const activeEntry = sortable.find(st => st.key === activeStore);
-            logEvent({
+            if (!saved) logEvent({
                 type: 'comparison',
                 active_store: activeStore,
                 cheapest_store: cheapest ? cheapest.key : activeStore,
@@ -2240,7 +2192,7 @@ async function compareCarts() {
 
             finalCartToTransfer = inStockItems;
 
-            document.getElementById('compareAgain')?.addEventListener('click', compareCarts);
+            document.getElementById('compareAgain')?.addEventListener('click', () => compareCarts(saved));
             document.getElementById('detailsToggle')?.addEventListener('click', () => {
                 document.getElementById('detailsContent').classList.toggle('open');
                 document.getElementById('toggleArrow').classList.toggle('open');
@@ -2252,7 +2204,7 @@ async function compareCarts() {
             Object.entries(RV_SWITCH).forEach(([storeKey, sw]) => {
                 document.getElementById(sw.id)?.addEventListener('click', () => { logEvent({ type: 'switch', store: storeKey }); sendCartTo(storeKey, allSources); });
             });
-            saveCartToHistory(activeStore, allSources, Object.fromEntries(sortable.map(st => [st.key, Number(rvShownTotal(st).toFixed(2))])));
+            if (!saved) saveCartToHistory(activeStore, allSources, Object.fromEntries(sortable.map(st => [st.key, Number(rvShownTotal(st).toFixed(2))])), rawCartItems);
 
             compareBtn.disabled = false;
         }
@@ -2302,10 +2254,13 @@ function sendCartTo(storeKey, items) {
 // ===== MY CARTS (kept on this computer only) =====
 const HISTORY_FIELDS = ['name', 'quantity', 'code', 'shufersal_code', 'targetCode', 'victory_code', 'victory_retailer_id', 'mck_code', 'mck_retailer_id', 'isRamiMissing', 'isVictoryMissing', 'isMCKMissing'];
 
-async function saveCartToHistory(store, items, totals) {
+// items: the compared lines with every chain's codes (for "build at"). raw: the cart as scanned (for "compare now").
+async function saveCartToHistory(store, items, totals, raw) {
     const slim = items.map(i => Object.fromEntries(HISTORY_FIELDS.filter(f => i[f] != null).map(f => [f, i[f]])));
     const { cartHistory = [] } = await chrome.storage.local.get('cartHistory');
-    await chrome.storage.local.set({ cartHistory: addToHistory(cartHistory, { at: Date.now(), store, totals, items: slim }) });
+    await chrome.storage.local.set({ cartHistory: addToHistory(cartHistory, {
+        at: Date.now(), store, totals, items: slim, raw: raw.map(({ code, name, quantity }) => ({ code, name, quantity }))
+    }) });
 }
 
 async function showHistory() {
@@ -2313,6 +2268,12 @@ async function showHistory() {
     const resultDiv = document.getElementById('result');
     resultDiv.innerHTML = renderHistory(cartHistory);
     document.getElementById('startView').hidden = true;
+    resultDiv.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => {
+        const open = b.getAttribute('aria-expanded') !== 'true';
+        b.setAttribute('aria-expanded', String(open));
+        document.getElementById('hist-' + b.dataset.toggle).hidden = !open;
+    }));
+    resultDiv.querySelectorAll('[data-restore]').forEach(b => b.addEventListener('click', () => compareCarts(cartHistory[Number(b.dataset.restore)])));
     resultDiv.querySelectorAll('[data-build]').forEach(b => b.addEventListener('click', () => {
         sendCartTo(b.dataset.build, cartHistory[Number(b.dataset.i)].items);
     }));
@@ -2342,7 +2303,7 @@ async function logEvent(event) {
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
-    initWindowMode();
+    rememberWindowPosition();
     initSettings();
     const btn = document.getElementById('compareBtn');
     if (btn) {
