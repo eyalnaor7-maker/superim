@@ -1,3 +1,28 @@
+// ===== TABS: one part of the settings at a time; settings.html#account opens that tab =====
+(function initTabs() {
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    const show = (tab, focus) => {
+        tabs.forEach(t => {
+            const on = t === tab;
+            t.setAttribute('aria-selected', String(on));
+            t.tabIndex = on ? 0 : -1;
+            document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+        });
+        if (focus) tab.focus();
+        window.dispatchEvent(new Event('resize')); // the map measures itself again after being hidden
+    };
+    tabs.forEach((t, i) => {
+        t.addEventListener('click', () => show(t));
+        t.addEventListener('keydown', e => {
+            // right-to-left: ArrowLeft goes to the next tab
+            const step = { ArrowLeft: 1, ArrowRight: -1 }[e.key];
+            if (step) { e.preventDefault(); show(tabs[(i + step + tabs.length) % tabs.length], true); }
+        });
+    });
+    const fromHash = document.getElementById('t-' + location.hash.slice(1));
+    if (fromHash) show(fromHash);
+})();
+
 // settings.js
 
 let allBranches = [];

@@ -77,9 +77,14 @@ async function transferCartToVictory(cartItems) {
             localStorage.setItem('cart-session-id', sessionId);
         }
 
-        // 3. One PUT with the whole array
-        updateVictoryStatus('🛒 משגר את העגלה לויקטורי...');
+        // 3. One PUT with the whole array. PUT only adds or updates lines (checked 2026-11-21),
+        // so every line already in the cart goes with quantity 0, which removes it: the cart starts empty.
+        updateVictoryStatus('🛒 מרוקן את העגלה ומשגר את המוצרים לויקטורי...');
+        const current = await fetch(`${VICTORY_API}/cart`, { headers: { 'Accept': 'application/json', 'Cart-Session-Id': sessionId } })
+            .then(r => r.ok ? r.json() : null).catch(() => null);
         const payload = Array.from(lines.entries()).map(([id, quantity]) => ({ id, quantity }));
+        const added = payload.length;
+        (current?.data?.items || []).forEach(i => { if (!lines.has(String(i.id))) payload.push({ id: String(i.id), quantity: 0 }); });
         const putResp = await fetch(`${VICTORY_API}/cart`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', 'Cart-Session-Id': sessionId },
@@ -87,7 +92,7 @@ async function transferCartToVictory(cartItems) {
         });
         const putJson = putResp.ok ? await putResp.json().catch(() => null) : null;
         if (putJson?.status === 'success') {
-            updateVictoryStatus(`🎉 מדהים! ${payload.length} מוצרים הועברו לעגלה שלך! מרענן...`);
+            updateVictoryStatus(`🎉 מדהים! ${added} מוצרים הועברו לעגלה שלך! מרענן...`);
             setTimeout(() => window.location.reload(), 2000);
         } else {
             updateVictoryStatus(`❌ השרת סירב לבקשה (שגיאה ${putResp.status})`);

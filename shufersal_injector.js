@@ -152,6 +152,20 @@ async function transferCartToShufersal(cartItems) {
         headers['X-XSRF-TOKEN'] = csrfToken;
     }
 
+    // empty the cart first, the way the site's own "empty cart" button does (checked 2026-11-21), so nothing old stays
+    updateShufersalStatus('מרוקן את העגלה הקיימת...');
+    try {
+        const resp = await fetchFromMainWorld('/online/he/cart/remove', {
+            method: 'POST',
+            headers: headers,
+            credentials: 'include',
+            body: csrfToken ? 'CSRFToken=' + encodeURIComponent(csrfToken) : ''
+        });
+        console.log('Shufersal Injector: empty cart status', resp.status);
+    } catch (e) {
+        console.error('Shufersal Injector: could not empty the cart', e);
+    }
+
     let successCount = 0;
     let urlStatuses = {};
 

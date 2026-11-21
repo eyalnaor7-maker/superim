@@ -47,12 +47,24 @@
         .btn.sec { background: #fff; color: var(--tx); border: 1px solid #94a3b8; box-shadow: none; margin-top: 10px; }
         .btn.danger { background: var(--bad); color: #fff; box-shadow: none; }
         .loading-spinner { text-align: center; color: var(--sub); padding: 12px 0 20px; }
+        .tabs { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 14px; padding: 4px; background: var(--card); border: 1px solid var(--soft); border-radius: 14px; box-shadow: var(--sh); }
+        .tabs button { flex: 1 0 auto; min-height: 40px; padding: 6px 12px; border: 0; border-radius: 10px; background: none; color: var(--sub); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+        .tabs button[aria-selected="true"] { background: #ecfdf5; color: var(--ok); }
         @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
     </style>
 </head>
 <body>
     <div class="band"><h1>הגדרות</h1><p>כאן קובעים איפה אתם גרים ומאיזה סניפים להשוות מחירים.</p></div>
     <main class="container">
+        <div class="tabs" role="tablist" aria-label="חלקי ההגדרות">
+            <button type="button" role="tab" id="t-address" aria-controls="p-address" aria-selected="true">כתובת וסניפים</button>
+            <button type="button" role="tab" id="t-profile" aria-controls="p-profile" aria-selected="false" tabindex="-1">פרופיל</button>
+            <button type="button" role="tab" id="t-account" aria-controls="p-account" aria-selected="false" tabindex="-1">החשבון שלי</button>
+            <button type="button" role="tab" id="t-privacy" aria-controls="p-privacy" aria-selected="false" tabindex="-1">פרטיות</button>
+            <button type="button" role="tab" id="t-feedback" aria-controls="p-feedback" aria-selected="false" tabindex="-1">משוב</button>
+        </div>
+
+        <div role="tabpanel" id="p-address" aria-labelledby="t-address">
         <div id="loading" class="loading-spinner" role="status">טוען סניפים מהרשתות...</div>
 
         <section class="card" id="location-section" aria-labelledby="h-address" style="display: none;">
@@ -108,7 +120,9 @@
             <button type="button" class="btn" id="save-btn">שמירת כתובת וסניפים</button>
             <div id="statusMessage" class="status" role="status" aria-live="polite"></div>
         </form>
+        </div>
 
+        <div role="tabpanel" id="p-profile" aria-labelledby="t-profile" hidden>
         <section class="card" id="profile" aria-labelledby="h-profile">
             <h2 id="h-profile">הפרופיל שלי</h2>
             <p class="lead">השינויים כאן נשמרים מיד, בלי כפתור.</p>
@@ -117,7 +131,9 @@
             <div class="help-text" id="name-help">השם נשמר בדפדפן שלך בלבד ומשמש לברכה בחלון התוסף.</div>
             <p class="help-text" style="margin-top:16px"><b id="history-count">0</b> סלים שמורים במחשב הזה. אפשר לחזור אליהם מ"הסלים שלי" בחלון התוסף.</p>
         </section>
+        </div>
 
+        <div role="tabpanel" id="p-account" aria-labelledby="t-account" hidden>
         <section class="card" id="account" aria-labelledby="h-account">
             <h2 id="h-account">החשבון שלי</h2>
             <p class="lead">חשבון הוא לא חובה. הוא נחוץ רק לחיפוש תחליפים עם AI (פעם ביום).</p>
@@ -146,7 +162,9 @@
             </div>
             <div id="acct-status" class="status" role="status" aria-live="polite"></div>
         </section>
+        </div>
 
+        <div role="tabpanel" id="p-privacy" aria-labelledby="t-privacy" hidden>
         <section class="card" id="privacy" aria-labelledby="h-privacy">
             <h2 id="h-privacy">פרטיות</h2>
             <label class="check" for="share-stats"><input type="checkbox" id="share-stats" checked aria-describedby="stats-help"> לשתף נתונים אנונימיים לשיפור התוסף</label>
@@ -154,7 +172,9 @@
             <p class="help-text" style="margin-top:12px">הרחוב נשמר בדפדפן שלך ונשלח רק לרמי לוי (בדיקת משלוח) ולמפה של OpenStreetMap (איתור על המפה).</p>
             <div id="auto-status" class="status status-success" role="status" aria-live="polite"></div>
         </section>
+        </div>
 
+        <div role="tabpanel" id="p-feedback" aria-labelledby="t-feedback" hidden>
         <section class="card" id="feedback" aria-labelledby="h-feedback">
             <h2 id="h-feedback">משוב</h2>
             <p class="lead">יש בעיה או רעיון? נשמח לשמוע.</p>
@@ -165,6 +185,7 @@
             <button type="button" class="btn" id="fb-send">שליחת משוב</button>
             <div id="fb-status" class="status" role="status" aria-live="polite"></div>
         </section>
+        </div>
     </main>
 
     <script src="supabase_config.js"></script>

@@ -1180,7 +1180,7 @@ async function initSettings() {
 // ===== MAIN COMPARISON FLOW =====
 // Called with nothing: scans the cart in the store tab. Called with a cart from "הסלים שלי": compares that cart
 // in every chain with live prices and scans no tab (there is then no "active" store).
-async function compareCarts(saved) {
+async function compareCarts(saved, aiNote) { // aiNote: the AI already ran for this cart, so it does not run again
     saved = saved && Array.isArray(saved.raw) ? saved : null; // a button click passes its event here
     const statusDiv = document.getElementById('status');
     const resultDiv = document.getElementById('result');
@@ -1604,7 +1604,7 @@ async function compareCarts(saved) {
                             if (subItem) {
                                 itemsForMCK.push({
                                     barcode: subBarcode.replace('P_', ''),
-                                    name: `[תחליף] ${subItem.name}`,
+                                    name: subItem.name, // Machsanei HaShuk searches by this name when the barcode search finds nothing
                                     quantity: item.quantity,
                                     retailerProductId: null
                                 });
@@ -2207,11 +2207,13 @@ async function compareCarts(saved) {
             const aiItems = [...inStockItems, ...outOfStockItems].filter(i => i.isShufersalMissing || i.isRamiMissing || i.isVictoryMissing || i.isMCKMissing);
             // the card is always there, so the shopper can see why AI is or is not offered for this cart
             const aiCount = aiItems.length + missingItems.length;
-            html += `<div class="win" style="margin:0 14px 16px; padding:12px"><b>תחליפים עם AI</b>` + (aiCount > 0
-                ? `<div class="sub">${aiCount === 1 ? 'מוצר אחד חסר' : aiCount + ' מוצרים חסרים'} בחלק מהרשתות או במאגר שלנו (למשל מותג פרטי של רשת). ה-AI יחפש מוצרים מקבילים. פעם אחת ביום לכל משתמש.</div>
-                <button class="cta" id="aiSubBtn" type="button" style="margin-top:8px">חיפוש תחליפים עם AI</button>
-                <div id="aiSubMsg" class="sub c" role="status" aria-live="polite"></div>`
-                : `<div class="sub">כל המוצרים נמצאו בכל הרשתות, אז אין צורך בתחליפים לסל הזה.</div>`) + `</div>`;
+            const aiOn = document.getElementById('aiToggle').checked;
+            html += `<div class="win" style="margin:0 14px 16px; padding:12px"><b>תחליפים עם AI</b><div id="aiSubMsg" class="sub" role="status" aria-live="polite">${esc(
+                aiNote ? aiNote
+                : aiCount === 0 ? 'כל המוצרים נמצאו בכל הרשתות, אז אין צורך בתחליפים לסל הזה.'
+                : !aiOn ? `${aiCount === 1 ? 'מוצר אחד חסר' : aiCount + ' מוצרים חסרים'} בחלק מהרשתות או במאגר שלנו. כדי שה-AI יחפש מוצרים מקבילים, הדליקו את המתג "חיפוש תחליפים עם AI" במסך ההשוואה.`
+                : aiRemaining === 0 ? 'המכסה של היום נוצלה. אפשר שוב מחר.'
+                : 'מחפשים תחליפים עם AI...')}</div></div>`;
             resultDiv.innerHTML = html;
             document.getElementById('startView').hidden = true;
             statusDiv.innerHTML = 'סיימנו';
@@ -2231,7 +2233,7 @@ async function compareCarts(saved) {
 
             finalCartToTransfer = inStockItems;
 
-            document.getElementById('aiSubBtn')?.addEventListener('click', () => askAiSubstitutes(aiItems, saved, missingItems.map(i => ({ store: codeStore, code: i.code, name: i.name }))));
+            if (aiOn && aiCount > 0 && !aiNote && aiRemaining !== 0) askAiSubstitutes(aiItems, saved, missingItems.map(i => ({ store: codeStore, code: i.code, name: i.name })));
             document.getElementById('compareAgain')?.addEventListener('click', () => compareCarts(saved));
             document.getElementById('detailsToggle')?.addEventListener('click', () => {
                 document.getElementById('detailsContent').classList.toggle('open');
@@ -2264,39 +2266,59 @@ async function compareCarts(saved) {
 
 
 // ===== AI SUBSTITUTES (needs an account; server limits it to once a day) =====
-async function askAiSubstitutes(items, saved, unknown = []) {
-    const btn = document.getElementById('aiSubBtn');
-    const msg = document.getElementById('aiSubMsg');
-    const stores = [['isShufersalMissing', 'shufersal'], ['isRamiMissing', 'rami_levy'], ['isVictoryMissing', 'victory'], ['isMCKMissing', 'machsanei_hashuk']];
-    btn.disabled = true;
+// The switch on the start view decides whether every comparison asks the AI. Its quota line sits under it.
+let aiRemaining; // 1 or 0 left today, null = no limit (owner), undefined = not known yet
+const aiCall = (session, body) => fetch(`${SUPABASE_URL}/functions/v1/ai-substitutes`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+}).then(async r => ({ ok: r.ok, data: await r.json().catch(() => ({})) }));
+const loginLink = el => {
+    el.innerHTML = 'כדי להשתמש ב-AI צריך להתחבר <button type="button" class="link-btn">להתחברות</button>';
+    el.querySelector('button').addEventListener('click', () => openTab(chrome.runtime.getURL('settings.html#account')));
+};
+
+async function initAiSwitch() {
+    const sw = document.getElementById('aiToggle');
+    sw.checked = (await chrome.storage.local.get('aiAuto')).aiAuto === true;
+    sw.addEventListener('change', () => chrome.storage.local.set({ aiAuto: sw.checked }));
+    showAiQuota();
+}
+
+async function showAiQuota(remaining) {
+    const el = document.getElementById('aiQuota');
     try {
         const { data: { session } } = await sb.auth.getSession();
-        if (!session) {
-            msg.innerHTML = 'כדי להשתמש ב-AI צריך להתחבר <button type="button" class="link-btn" id="aiLoginBtn">להתחברות</button>';
-            document.getElementById('aiLoginBtn').addEventListener('click', () => openTab(chrome.runtime.getURL('settings.html')));
-            btn.disabled = false;
-            return;
+        if (!session) { aiRemaining = undefined; loginLink(el); return; }
+        if (remaining === undefined) {
+            const r = await aiCall(session, { quota: true });
+            if (!r.ok || !r.data.ok) throw new Error(r.data.error || 'quota');
+            remaining = r.data.remaining;
         }
-        msg.textContent = 'מחפשים תחליפים...';
-        const body = {
+        aiRemaining = remaining;
+        el.textContent = remaining === null ? 'נשאר במכסה: ללא הגבלה' : `נשאר במכסה היום: ${remaining} מתוך 1${remaining ? '' : ' (מתחדש מחר)'}`;
+    } catch (e) { console.warn('AI quota unknown', e); el.textContent = ''; }
+}
+
+async function askAiSubstitutes(items, saved, unknown = []) {
+    const msg = document.getElementById('aiSubMsg');
+    const stores = [['isShufersalMissing', 'shufersal'], ['isRamiMissing', 'rami_levy'], ['isVictoryMissing', 'victory'], ['isMCKMissing', 'machsanei_hashuk']];
+    try {
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) { loginLink(msg); return; }
+        const { ok, data } = await aiCall(session, {
             items: items.slice(0, 8).map(i => ({ barcode: i.shufersal_code, name: i.name, missingIn: stores.filter(([flag]) => i[flag]).map(([, s]) => s) })),
             unknown: unknown.slice(0, Math.max(0, 8 - items.length))
-        };
-        const res = await fetch(`${SUPABASE_URL}/functions/v1/ai-substitutes`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
         });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) { msg.textContent = friendlyError(data.error || 'unavailable'); btn.disabled = false; return; }
+        showAiQuota(data.remaining);
+        if (!ok || !data.ok) { msg.textContent = friendlyError(data.error || 'unavailable'); return; }
         const n = (data.found || []).length;
-        if (!n) { msg.textContent = 'לא נמצאו תחליפים מתאימים'; return; }
+        if (!n) { msg.textContent = 'ה-AI לא מצא תחליפים מתאימים לסל הזה.'; return; }
         msg.textContent = `נמצאו תחליפים ל-${n} מוצרים. משווים שוב...`;
-        setTimeout(() => compareCarts(saved), 1500);
+        setTimeout(() => compareCarts(saved, `ה-AI מצא תחליפים ל-${n} מוצרים, והם כבר בהשוואה הזו.`), 1500);
     } catch (e) {
         console.error(e);
         msg.textContent = friendlyError('unavailable');
-        btn.disabled = false;
     }
 }
 
@@ -2384,6 +2406,7 @@ async function logEvent(event) {
 document.addEventListener('DOMContentLoaded', () => {
     rememberWindowPosition();
     initSettings();
+    initAiSwitch();
     const btn = document.getElementById('compareBtn');
     if (btn) {
         btn.addEventListener('click', compareCarts);

@@ -146,12 +146,11 @@ async function transferGuestCart(cartItems, rawState) {
         try { state = JSON.parse(rawState) || {}; } catch (e) { /* no usable state */ }
         const store = String((state.cart && state.cart.storeId) || 331);
         const quantities = {};
-        const removeIds = new Set();
         const barcodes = {};
         cartItems.forEach(i => {
             const id = String(i.targetCode);
             const qty = i.quantity !== undefined ? Number(i.quantity) : 1;
-            if (qty > 0) quantities[id] = qty; else removeIds.add(id);
+            if (qty > 0) quantities[id] = qty;
             if (i.barcode) barcodes[id] = String(i.barcode).replace(/\D/g, '');
         });
 
@@ -177,11 +176,15 @@ async function transferGuestCart(cartItems, rawState) {
             updateStatus("⚠️ חלק מהמוצרים לא נמצאו בקטלוג ולא נוספו.");
         }
 
+        // start from an empty cart, so nothing that was there before stays (the delivery line is the site's own)
+        if (state.cart && Array.isArray(state.cart.items)) state.cart.items = state.cart.items.filter(i => i && i.is_delivery);
         state = mergeGuestCart(state, products, quantities);
-        state.cart.items = state.cart.items.filter(i => !removeIds.has(String(i.id)));
-        localStorage.setItem('ramilevy', JSON.stringify(state));
+        const json = JSON.stringify(state);
+        localStorage.setItem('ramilevy', json);
         updateStatus("🎉 עבר בהצלחה! מרענן את העמוד...");
-        setTimeout(() => { window.location.reload(); }, 1500);
+        // right after loading, the site saves its own copy of the old cart (seen 2026-11-21); put ours back until the reload
+        const keep = setInterval(() => { if (localStorage.getItem('ramilevy') !== json) localStorage.setItem('ramilevy', json); }, 100);
+        setTimeout(() => { clearInterval(keep); window.location.reload(); }, 1500);
     } catch (error) {
         updateStatus("❌ שגיאת רשת מול השרת.");
         console.error(error);

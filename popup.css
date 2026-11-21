@@ -134,3 +134,12 @@ button { font-family: inherit; }
 .hist-body .cta { margin-top: 10px; }
 .hist .btns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--sub); margin-top: 10px; }
 .hist .mini { margin-top: 0; }
+
+/* AI switch on the start view */
+.ai-switch { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; cursor: pointer; font-size: 13px; font-weight: 500; }
+.ai-switch input { appearance: none; width: 34px; height: 20px; margin: 0; border-radius: 99px; background: #cbd5e1; position: relative; cursor: pointer; transition: background .15s; }
+.ai-switch input::after { content: ''; position: absolute; top: 2px; inset-inline-start: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: inset-inline-start .15s; }
+.ai-switch input:checked { background: #047857; }
+.ai-switch input:checked::after { inset-inline-start: 16px; }
+.ai-switch input:focus-visible { outline: 2px solid #047857; outline-offset: 2px; }
+#aiQuota { margin-top: 4px; }

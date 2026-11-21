@@ -22,6 +22,7 @@ async function transferCartToMCK(cartItems) {
 
     let token = '';
     let branchId = null;
+    let cartId = null;
 
     // חיפוש token ו-branchId ב-localStorage (אותו מבנה כמו ויקטורי - פלטפורמת Stor.ai)
     for (const key of Object.keys(localStorage)) {
@@ -47,6 +48,9 @@ async function transferCartToMCK(cartItems) {
             const bid = p?.branchId || p?.branch?.id || p?.selectedBranch?.id
                       || p?.currentBranch?.id || p?.store?.branchId;
             if (bid && !branchId) branchId = Number(bid);
+
+            const cid = p?.cartId || p?.serverCartId || p?.cart?.id || p?.currentCart?.id || p?.activeCart?.id;
+            if (cid && !cartId) cartId = cid;
 
         } catch (e) {}
     }
@@ -113,18 +117,36 @@ async function transferCartToMCK(cartItems) {
         return;
     }
 
+    // the existing cart: every line in it that is not ours goes with quantity 0, so the cart starts empty.
+    // shortcut: not checked on the live site (robot check); if old lines stay, look at the line format the site sends when removing one
+    let addUrl = `/v2/retailers/${MCK_RETAILER_ID}/branches/${branchId}/carts?appId=${MCK_APP_ID}`;
+    let addHeaders = headers;
+    if (cartId) {
+        addUrl = `/v2/retailers/${MCK_RETAILER_ID}/branches/${branchId}/carts/${cartId}?appId=${MCK_APP_ID}`;
+        addHeaders = { ...headers, 'x-http-method-override': 'PATCH' }; // the same call the price check uses
+        updateMCKStatus('🧹 מרוקן את העגלה הקיימת...');
+        try {
+            const cur = await fetch(addUrl, { method: 'POST', headers: addHeaders, credentials: 'include', body: JSON.stringify({ lines: [] }) })
+                .then(r => r.ok ? r.json() : null);
+            const wanted = new Set(linesPayload.map(l => l.retailerProductId));
+            (cur?.cart?.lines || cur?.lines || []).forEach(l => {
+                const rid = Number(l.retailerProductId);
+                if (l.type === 1 && rid && !wanted.has(rid)) linesPayload.push({ quantity: 0, soldBy: null, isCase: false, retailerProductId: rid, type: 1 });
+            });
+        } catch (e) { console.error('could not read the current cart', e); }
+    }
+
     const payload = {
         lines: linesPayload,
         deliveryType: 1
     };
 
     updateMCKStatus('🛒 משגר את העגלה למחסני השוק...');
-    const addUrl = `/v2/retailers/${MCK_RETAILER_ID}/branches/${branchId}/carts?appId=${MCK_APP_ID}`;
 
     try {
         const addResponse = await fetch(addUrl, {
             method: 'POST',
-            headers: headers,
+            headers: addHeaders,
             credentials: 'include',
             body: JSON.stringify(payload)
         });
