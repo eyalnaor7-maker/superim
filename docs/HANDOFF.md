@@ -52,6 +52,8 @@
 | `supabase/functions/ai-substitutes/index.ts` | פונקציית השרת של ה-AI (סעיף 4) |
 | `sql/` | כל קובצי ה-SQL שהורצו (סעיף 5) |
 | `public/dashboard.html`, `public/confirmed.html` | הדשבורד ודף "האימייל אושר" |
+| `data_pipeline/` | סקריפטי Python ישנים שבנו את המאגר מקובצי ה-XML של הרשתות (רצים מתוך התיקייה, עם `config.json` לידם) |
+| `README.md`, `docs/screenshots/` | דף הפתיחה באנגלית ב-GitHub (לקורות חיים) |
 | `pack_extension.py` | אריזה מרשימה סגורה (`BASE_FILES`) וסריקת סודות. קובץ חדש לתוסף חייב להיכנס לרשימה |
 
 ---
