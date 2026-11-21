@@ -1,85 +1,86 @@
 # Supermarket Cart Compare
 
-A Chrome extension that takes the shopping cart you already filled on one Israeli supermarket site and prices the same cart at four chains (Shufersal, Rami Levy, Victory, Machsanei HaShuk), **including delivery fees and multi-buy deals**. With one click it then rebuilds the cart at the cheapest chain.
+A Chrome extension I built to answer a question I kept asking while shopping online: would this exact cart be cheaper at another supermarket?
+
+You fill a cart on one of four Israeli chains (Shufersal, Rami Levy, Victory or Machsanei HaShuk), click the extension, and about ten seconds later you see what the same cart costs at the other three. The totals include delivery fees and multi-buy deals. If another chain comes out cheaper, one more click builds the cart there for you.
 
 <p>
   <img src="docs/screenshots/comparison.png" alt="Comparison result: the same 6-product cart priced at four chains, cheapest first" width="300">
-  &nbsp;
-  <img src="docs/screenshots/dashboard.png" alt="Analytics dashboard (demo data): comparisons per day, savings found, cheapest chain" width="520">
+  <img src="docs/screenshots/dashboard.png" alt="Analytics dashboard with demo data: comparisons per day, savings found, cheapest chain" width="520">
 </p>
 
-*Left: a comparison result. Right: the usage dashboard (demo data at [dashboard.html?demo=1](https://supermarket-compare-81306.web.app/dashboard.html?demo=1)).*
+On the left is a real comparison. On the right is the usage dashboard, shown here with demo data ([open the demo](https://supermarket-compare-81306.web.app/dashboard.html?demo=1)).
 
----
+## How it works
 
-## What it does
+The extension reads the cart from the site you're on. Each chain stores it differently: one keeps it in page state, another in local storage, another behind an API. So there's a small reader for each.
 
-1. **Reads the cart** on the chain's website (each site stores it differently: page state, local storage or an API).
-2. **Matches products across chains** by barcode, using a product database built from the chains' public price files. Products the database does not know, such as a chain's own brand, can be matched by AI (see below).
-3. **Gets live prices** from all four chains at the same time, in hidden tabs, using each site's own search API (about 10 seconds).
-4. **Computes a fair total**:
-   - Multi-buy deals ("2 for ₪115") are applied per line.
-   - The delivery fee is checked for the user's city and street, per delivery day.
-   - **Savings are computed only on products found in both chains**, so a chain never looks cheaper just because it is missing items.
-5. **Rebuilds the cart** at the chosen chain. The existing cart there is emptied first, then the matched products are added.
+Then it has to find the same products at the other chains. I built a product database from the price files that Israeli chains are required by law to publish. It holds about 5,800 products per chain, and products are matched by barcode. The Python scripts that built it are in [`data_pipeline/`](data_pipeline).
 
-## Data and analytics
+Database prices go stale, so the extension also asks all four sites for live prices at the same time, each in a hidden tab, using the site's own search.
 
-| | |
-|---|---|
-| **Source data** | Israel's Price Transparency Law XML feeds, parsed by Python scripts in [`data_pipeline/`](data_pipeline) into a product table (about 5,800 products per chain) |
-| **Database** | PostgreSQL on Supabase: products, per-chain prices, substitutes, AI matches, anonymous usage events, feedback, security log. All SQL migrations are in [`sql/`](sql) |
-| **Dashboard** | [`public/dashboard.html`](public/dashboard.html), built with Chart.js on top of one SQL function that aggregates everything. It shows comparisons per day, savings found, which chain came out cheapest, switching between chains, top cities and top products |
-| **Privacy by design** | Only totals and product names are logged, never a whole cart or a user id. A city appears only after at least 3 comparisons, so a single user can't be identified |
+Getting a fair total took most of the work:
+- A deal like "2 for ₪115" is applied line by line, the same way the chain's checkout does it.
+- The delivery fee depends on your city and street and on the delivery day, so it's looked up for your address.
+- A chain that's missing half your cart would look cheap. To avoid that, savings are counted only on products found at both chains.
 
-## AI substitutes (Gemini)
+When you choose a chain, the extension empties the cart you already have there and fills it with the matched products.
 
-When a product is missing at some chain, the shopper can turn on **"search substitutes with AI"**:
+## Data and the dashboard
 
-- **Candidates come from SQL.** Postgres trigram similarity (`pg_trgm`) shortlists similar products, keeping only those sold at the chains where the original is missing.
-- **The AI only chooses.** Gemini picks up to two real substitutes from that shortlist (same product type, similar size). The server rejects any answer that isn't on the list.
-- **Results are saved.** Every later comparison uses the chosen substitutes automatically.
-- **Limits.** It runs in a Supabase Edge Function ([`supabase/functions/ai-substitutes`](supabase/functions/ai-substitutes/index.ts)) and needs an account. It is limited to once a day per user, enforced by a database primary key. The remaining quota is shown in the extension.
+Everything lives in PostgreSQL on Supabase: products, prices per chain, substitutes, anonymous usage events and feedback. The SQL migrations are in [`sql/`](sql).
 
-## Security and quality
+The dashboard ([`public/dashboard.html`](public/dashboard.html)) gets its data from one SQL function and draws it with Chart.js. It shows:
+- comparisons per day
+- how much money the comparisons found
+- which chain came out cheapest
+- how often people moved their cart to another chain
+- the top cities and the most compared products
 
-- **Row Level Security on every table.** Price tables are read-only for the public key, and users see only their own rows.
-- **No secrets in the extension.** It ships only the public (publishable) key. The packaging script [`pack_extension.py`](pack_extension.py) builds from a fixed file list and fails if it finds a secret-looking string.
-- **Accounts.** Email and password through Supabase Auth, with rate limits on sign-in. Users can delete their own account.
-- **Testing.** 38 automated tests (`node --test`) cover price math, promotions, delivery fees and cart parsing. Every change is also tested in a real Chrome with the extension loaded.
+I kept the logging small on purpose. It records totals and product names, never a whole cart and never a user id. A city only appears once it has at least 3 comparisons, so nobody can be picked out.
 
-## Tech stack
+## Finding substitutes with AI
 
-| Area | Tools |
-|---|---|
-| Extension | JavaScript (Chrome Manifest V3), HTML/CSS, Hebrew right-to-left UI, Leaflet map |
-| Backend | Supabase: PostgreSQL, Auth, Edge Functions (TypeScript/Deno), Row Level Security |
-| Data | Python ETL from XML price feeds, SQL (aggregations, `pg_trgm` similarity) |
-| AI | Google Gemini (structured JSON output, server-side validation) |
-| Analytics | Chart.js dashboard on Firebase Hosting |
-| Quality | Node test runner, real-browser testing with Chrome DevTools, AI-assisted development (Claude Code) |
+Sometimes a product simply isn't sold at a chain. There's a switch in the extension that asks Google's Gemini for a replacement. I didn't want the model inventing products, so the work is split:
 
-## Repository map
+1. SQL makes a shortlist of similar products by name similarity (`pg_trgm`). Only products sold at the chain where the original is missing go on the list.
+2. Gemini picks up to two products from that list.
+3. The server throws away any answer that isn't on the list, then saves the choice. Every later comparison uses it automatically.
 
-| Path | What it is |
-|---|---|
-| `popup.js` / `popup.html` | The comparison window: cart reading, live price agents per chain, totals, results |
-| `results_view.js` | Result rendering (pure functions, unit tested) |
-| `*_injector.js` | Rebuild the cart on each chain's website |
-| `victory_match.js`, `rami_guest.js` | Chain-specific price, promotion and delivery-fee logic |
-| `settings.html` / `settings.js` | Settings: address and branches, profile, account, privacy, feedback |
-| `supabase/functions/` | The AI substitutes function |
-| `sql/` | Database migrations: tables, RLS, dashboard functions |
-| `public/` | Dashboard and email-confirmation page |
-| `data_pipeline/` | Python scripts that built the product database from the chains' XML feeds |
-| `tests/` | Automated tests |
-| `docs/HANDOFF.md` | Detailed project status (in Hebrew) |
+This runs in a Supabase Edge Function ([`supabase/functions/ai-substitutes`](supabase/functions/ai-substitutes/index.ts)). You need an account to use it. Each account gets one search a day, and the database enforces the limit with a primary key. The extension shows how much of the daily limit is left.
+
+## Security and testing
+
+- Every table has Row Level Security. Price tables are read-only for the public key, and each user can read only their own rows.
+- The extension ships only Supabase's public key. [`pack_extension.py`](pack_extension.py) builds the package from a fixed list of files, and it stops if it finds anything that looks like a secret key.
+- Accounts are email and password through Supabase Auth. Sign-in attempts are rate limited, and users can delete their own account.
+- There are 38 automated tests covering price math, deals, delivery fees and cart parsing. I also test every change in a real Chrome with the extension loaded.
+
+## Built with
+
+- **Extension:** JavaScript (Chrome Manifest V3), HTML and CSS, with a Hebrew right-to-left interface and a Leaflet map
+- **Backend:** Supabase (PostgreSQL, Auth, Edge Functions in TypeScript)
+- **Data:** Python for the XML price feeds, SQL for aggregation and similarity search
+- **AI:** Google Gemini
+- **Dashboard:** Chart.js, hosted on Firebase
+- **Development:** I wrote the code with an AI coding assistant (Claude Code) and checked each change in Chrome DevTools
+
+## Where things are
+
+- **The comparison window:** `popup.js` and `popup.html`. This covers reading the cart, the live price lookups and the totals.
+- **The results screen:** `results_view.js`, written as pure functions so it can be tested.
+- **Building the cart on each site:** the `*_injector.js` files.
+- **Chain-specific rules:** `victory_match.js` and `rami_guest.js`, for prices, deals and delivery fees.
+- **Settings:** `settings.html` and `settings.js`.
+- **Project status notes:** [`docs/HANDOFF.md`](docs/HANDOFF.md), in Hebrew.
 
 ## Running it
 
 ```bash
-node --test                       # run the tests
-python pack_extension.py          # build dist/extension.zip
+node --test                 # run the tests
+python pack_extension.py    # build dist/extension.zip
 ```
 
-Unzip `dist/extension.zip`, then load the folder in `chrome://extensions` → "Load unpacked". Open a cart at one of the four chains and click the extension icon.
+1. Unzip `dist/extension.zip`.
+2. In `chrome://extensions`, choose "Load unpacked" and pick the unzipped folder.
+3. Open a cart on one of the four chains and click the extension icon.
