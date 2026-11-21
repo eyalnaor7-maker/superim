@@ -21,7 +21,7 @@
         .card h2 { font-size: 18px; margin-bottom: 4px; }
         .lead { color: var(--sub); margin-bottom: 16px; }
         label { display: block; margin-bottom: 6px; font-weight: 600; }
-        input[type="text"], select, textarea { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #94a3b8; border-radius: 10px; font: inherit; background: #fff; color: var(--tx); }
+        input[type="text"], input[type="email"], input[type="password"], select, textarea { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #94a3b8; border-radius: 10px; font: inherit; background: #fff; color: var(--tx); }
         textarea { resize: vertical; }
         ::placeholder { color: #64748b; opacity: 1; }
         input:disabled { background: #f1f5f9; border-color: var(--ln); color: var(--sub); cursor: not-allowed; }
@@ -44,6 +44,8 @@
         .status:not(:empty) { padding: 10px; }
         .status-success { background: #ecfdf5; color: var(--ok); }
         .status-info { color: var(--sub); }
+        .btn.sec { background: #fff; color: var(--tx); border: 1px solid #94a3b8; box-shadow: none; margin-top: 10px; }
+        .btn.danger { background: var(--bad); color: #fff; box-shadow: none; }
         .loading-spinner { text-align: center; color: var(--sub); padding: 12px 0 20px; }
         @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
     </style>
@@ -116,6 +118,35 @@
             <p class="help-text" style="margin-top:16px"><b id="history-count">0</b> סלים שמורים במחשב הזה. אפשר לחזור אליהם מ"הסלים שלי" בחלון התוסף.</p>
         </section>
 
+        <section class="card" id="account" aria-labelledby="h-account">
+            <h2 id="h-account">החשבון שלי</h2>
+            <p class="lead">חשבון הוא לא חובה. הוא נחוץ רק לחיפוש תחליפים עם AI (פעם ביום).</p>
+            <div id="acct-out">
+                <div class="field">
+                    <label for="acct-email">אימייל</label>
+                    <input type="email" id="acct-email" autocomplete="email" dir="ltr">
+                </div>
+                <div class="field">
+                    <label for="acct-pass">סיסמה</label>
+                    <input type="password" id="acct-pass" autocomplete="current-password" minlength="8" dir="ltr" aria-describedby="pass-help">
+                    <div class="help-text" id="pass-help">לפחות 8 תווים.</div>
+                </div>
+                <button type="button" class="btn" id="acct-signin">התחברות</button>
+                <button type="button" class="btn sec" id="acct-signup">הרשמה</button>
+            </div>
+            <div id="acct-in" hidden>
+                <p>מחובר/ת כ: <b id="acct-who" dir="ltr"></b></p>
+                <button type="button" class="btn sec" id="acct-signout">התנתקות</button>
+                <button type="button" class="btn sec" id="acct-delete">מחיקת החשבון</button>
+                <div id="acct-confirm" hidden>
+                    <p class="help-text" style="margin-top:12px">מחיקה תמחק לצמיתות את החשבון והנתונים שלו בשרת, ואת הנתונים ששמורים בדפדפן הזה (סלים שמורים, שם, כתובת והגדרות). אי אפשר לבטל.</p>
+                    <button type="button" class="btn danger" id="acct-yes">כן, למחוק לצמיתות</button>
+                    <button type="button" class="btn sec" id="acct-no">ביטול</button>
+                </div>
+            </div>
+            <div id="acct-status" class="status" role="status" aria-live="polite"></div>
+        </section>
+
         <section class="card" id="privacy" aria-labelledby="h-privacy">
             <h2 id="h-privacy">פרטיות</h2>
             <label class="check" for="share-stats"><input type="checkbox" id="share-stats" checked aria-describedby="stats-help"> לשתף נתונים אנונימיים לשיפור התוסף</label>
@@ -137,6 +168,7 @@
     </main>
 
     <script src="supabase_config.js"></script>
+    <script src="auth.js"></script>
     <script src="victory_match.js"></script>
     <script src="cities.js"></script>
     <script src="branch_service.js"></script>

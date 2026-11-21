@@ -76,6 +76,7 @@ td.n { text-align: end; font-variant-numeric: tabular-nums; font-weight: 600; }
             <div class="card"><h2>מאיפה באים ולאן עוברים</h2><div class="hint">באיזו רשת הייתה העגלה המקורית, ולאיזו רשת ביקשו להעביר אותה</div><div class="chart"><canvas id="cFlow"></canvas></div></div>
             <div class="card"><h2>ערים מובילות</h2><div class="hint">עיר עם פחות מ-3 השוואות לא מוצגת, כדי לא לזהות משתמש יחיד</div><table id="tCities"></table></div>
             <div class="card"><h2>המוצרים שהושוו הכי הרבה</h2><div class="hint">ספירה כללית לפי מוצר, בלי קשר לסל מסוים</div><table id="tProducts"></table></div>
+            <div class="card wide"><h2>יומן אבטחה</h2><div class="hint">30 האירועים האחרונים: התחברויות, מחיקת חשבון, שימוש ב-AI, כניסות לדשבורד</div><table id="tSecurity"></table></div>
             <div class="card wide"><h2>משוב מהמשתמשים</h2><div class="hint">50 ההודעות האחרונות</div><div id="fbList"></div></div>
         </div>
     </div>
@@ -123,8 +124,11 @@ async function fetchData(key, days) {
         body: JSON.stringify({ p_key: key, p_days: days })
     });
     if (r.status === 404) throw new Error('הדשבורד עוד לא הוגדר במסד הנתונים: צריך להריץ את קובץ ה-SQL ב-Supabase');
-    if (!r.ok) throw new Error('הסיסמה שגויה');
-    return r.json();
+    if (!r.ok) throw new Error('הדשבורד לא זמין כרגע. נסו שוב מאוחר יותר.');
+    const d = await r.json();
+    if (d.error === 'locked') throw new Error('יותר מדי ניסיונות שגויים. הכניסה נעולה ל-15 דקות.');
+    if (d.error) throw new Error('הסיסמה שגויה');
+    return d;
 }
 
 // All text from the database goes through textContent: feedback is written by strangers.
@@ -150,7 +154,8 @@ function render(d) {
         ['חיסכון שנמצא', money(t.saving_sum), `ב-${Number(t.with_saving).toLocaleString('he-IL')} השוואות נמצא סל זול יותר`],
         ['חיסכון ממוצע', money(t.saving_avg), 'בהשוואות שבהן נמצא חיסכון'],
         ['עברו לרשת אחרת', rate + '%', `${Number(t.switches).toLocaleString('he-IL')} בקשות לבנות עגלה`],
-        ['גודל סל ממוצע', Number(t.cart_avg), `${Number(t.matched_pct)}% מהמוצרים זוהו במאגר`]
+        ['גודל סל ממוצע', Number(t.cart_avg), `${Number(t.matched_pct)}% מהמוצרים זוהו במאגר`],
+        ['חשבונות רשומים', Number(d.accounts || 0).toLocaleString('he-IL'), `${Number(d.ai_uses || 0).toLocaleString('he-IL')} חיפושי תחליפים ב-AI בתקופה`]
     ];
     $('kpis').replaceChildren(...kpis.map(([l, v, n]) => { const c = el('div', null, 'card kpi'); c.append(el('div', l, 'lbl'), el('div', v, 'val'), el('div', n, 'note')); return c; }));
 
@@ -168,6 +173,8 @@ function render(d) {
 
     table($('tCities'), ['עיר', 'השוואות'], d.cities.map(c => [c.city, Number(c.count).toLocaleString('he-IL')]));
     table($('tProducts'), ['מוצר', 'פעמים'], d.products.map(p => [p.name || p.barcode, Number(p.count).toLocaleString('he-IL')]));
+    const EVENTS = { sign_in: 'התחברות', sign_out: 'התנתקות', account_deleted: 'מחיקת חשבון', ai_substitutes: 'חיפוש תחליפים ב-AI', ai_limit_reached: 'AI: הגיע למכסה היומית', ai_failed: 'AI: שגיאה', dashboard_login: 'כניסה לדשבורד', dashboard_login_failed: 'סיסמה שגויה לדשבורד', dashboard_locked: 'הדשבורד ננעל' };
+    table($('tSecurity'), ['מתי', 'אירוע'], (d.security || []).map(x => [new Date(x.at).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }), EVENTS[x.event] || x.event]));
     $('fbList').replaceChildren(...(d.feedback.length ? d.feedback.map(f => {
         const box = el('div', null, 'fb');
         box.append(el('div', f.message), el('div', [new Date(f.at).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }), f.version && 'גרסה ' + f.version, f.contact && 'קשר: ' + f.contact].filter(Boolean).join(' · '), 'meta'));

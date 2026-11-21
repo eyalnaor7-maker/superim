@@ -317,3 +317,53 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     if (location.hash === '#feedback') message.focus(); // arriving from the popup's "שליחת משוב" link
 });
+
+// ===== optional account (Supabase Auth) =====
+document.addEventListener('DOMContentLoaded', () => {
+    const $ = id => document.getElementById(id);
+    const status = $('acct-status');
+    const say = text => { clearTimeout(flashTimers.get(status)); status.textContent = text; };
+    const busy = on => document.querySelectorAll('#account button').forEach(b => { b.disabled = on; });
+    const authCode = e => e.status === 429 ? 'rate_limited' : e.code === 'user_already_exists' ? 'user_exists' : e.code;
+    const logEvent = name => { sb.rpc('log_my_event', { p_event: name }).then(() => {}, () => {}); };
+
+    sb.auth.onAuthStateChange((_event, session) => {
+        $('acct-out').hidden = !!session;
+        $('acct-in').hidden = !session;
+        $('acct-confirm').hidden = true;
+        $('acct-who').textContent = session?.user?.email || '';
+    });
+
+    $('acct-signin').addEventListener('click', async () => {
+        busy(true); say('מתחבר...');
+        const { error } = await sb.auth.signInWithPassword({ email: $('acct-email').value.trim(), password: $('acct-pass').value });
+        busy(false);
+        if (error) return say(friendlyError(error));
+        $('acct-pass').value = '';
+        say('התחברת בהצלחה');
+        logEvent('sign_in');
+    });
+    $('acct-signup').addEventListener('click', async () => {
+        busy(true); say('נרשם...');
+        const { error } = await sb.auth.signUp({ email: $('acct-email').value.trim(), password: $('acct-pass').value });
+        busy(false);
+        say(error ? friendlyError(error) : 'שלחנו אליך מייל לאישור. אחרי האישור אפשר להתחבר.');
+    });
+    $('acct-signout').addEventListener('click', async () => {
+        await sb.rpc('log_my_event', { p_event: 'sign_out' }).then(() => {}, () => {});
+        await sb.auth.signOut();
+        say('התנתקת');
+    });
+    $('acct-delete').addEventListener('click', () => { $('acct-confirm').hidden = false; $('acct-yes').focus(); });
+    $('acct-no').addEventListener('click', () => { $('acct-confirm').hidden = true; $('acct-delete').focus(); });
+    $('acct-yes').addEventListener('click', async () => {
+        busy(true); say('מוחק...');
+        const { error } = await sb.rpc('delete_my_account');
+        if (error) { busy(false); return say(friendlyError(authCode(error) || 'unavailable')); }
+        await sb.auth.signOut({ scope: 'local' });
+        await chrome.storage.local.clear();
+        await chrome.storage.sync.clear();
+        say('החשבון נמחק');
+        setTimeout(() => location.reload(), 2000);
+    });
+});

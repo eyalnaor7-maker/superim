@@ -2173,6 +2173,11 @@ async function compareCarts(saved) {
             }
 
             html += '</div></div>';
+            const aiItems = [...inStockItems, ...outOfStockItems].filter(i => i.isShufersalMissing || i.isRamiMissing || i.isVictoryMissing || i.isMCKMissing);
+            if (aiItems.length > 0) html += `<div class="win" style="margin:0 14px 16px; padding:12px">
+                <div class="sub">חסרים מוצרים בחלק מהרשתות? ה-AI יחפש מוצרים חלופיים דומים. פעם אחת ביום לכל משתמש.</div>
+                <button class="cta" id="aiSubBtn" type="button" style="margin-top:8px">חיפוש תחליפים עם AI</button>
+                <div id="aiSubMsg" class="sub c" role="status" aria-live="polite"></div></div>`;
             resultDiv.innerHTML = html;
             document.getElementById('startView').hidden = true;
             statusDiv.innerHTML = 'סיימנו';
@@ -2192,6 +2197,7 @@ async function compareCarts(saved) {
 
             finalCartToTransfer = inStockItems;
 
+            document.getElementById('aiSubBtn')?.addEventListener('click', () => askAiSubstitutes(aiItems, saved));
             document.getElementById('compareAgain')?.addEventListener('click', () => compareCarts(saved));
             document.getElementById('detailsToggle')?.addEventListener('click', () => {
                 document.getElementById('detailsContent').classList.toggle('open');
@@ -2210,7 +2216,9 @@ async function compareCarts(saved) {
         }
 
     } catch(error) {
-        document.getElementById('result').innerHTML = `<p style="color:#dc2626; text-align:center; padding:16px;">!שגיאה:<br>${esc(error.message)}</p>`;
+        const known = /^(לא נמצאה לשונית|לא ניתן לסרוק)/.test(error.message || '');
+        const shown = known ? error.message : 'משהו השתבש בהשוואה. נסו שוב, ואם זה חוזר שלחו לנו משוב.';
+        document.getElementById('result').innerHTML = `<p style="color:#dc2626; text-align:center; padding:16px;">${esc(shown)}</p>`;
         document.getElementById('status').innerHTML = '';
         compareBtn.disabled = false;
         console.error(error);
@@ -2220,6 +2228,40 @@ async function compareCarts(saved) {
     }
 }
 
+
+// ===== AI SUBSTITUTES (needs an account; server limits it to once a day) =====
+async function askAiSubstitutes(items, saved) {
+    const btn = document.getElementById('aiSubBtn');
+    const msg = document.getElementById('aiSubMsg');
+    const stores = [['isShufersalMissing', 'shufersal'], ['isRamiMissing', 'rami_levy'], ['isVictoryMissing', 'victory'], ['isMCKMissing', 'machsanei_hashuk']];
+    btn.disabled = true;
+    try {
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) {
+            msg.innerHTML = 'כדי להשתמש ב-AI צריך להתחבר <button type="button" class="link-btn" id="aiLoginBtn">להתחברות</button>';
+            document.getElementById('aiLoginBtn').addEventListener('click', () => openTab(chrome.runtime.getURL('settings.html')));
+            btn.disabled = false;
+            return;
+        }
+        msg.textContent = 'מחפשים תחליפים...';
+        const body = { items: items.slice(0, 8).map(i => ({ barcode: i.shufersal_code, name: i.name, missingIn: stores.filter(([flag]) => i[flag]).map(([, s]) => s) })) };
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/ai-substitutes`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) { msg.textContent = friendlyError(data.error || 'unavailable'); btn.disabled = false; return; }
+        const n = (data.found || []).length;
+        if (!n) { msg.textContent = 'לא נמצאו תחליפים מתאימים'; return; }
+        msg.textContent = `נמצאו תחליפים ל-${n} מוצרים. משווים שוב...`;
+        setTimeout(() => compareCarts(saved), 1500);
+    } catch (e) {
+        console.error(e);
+        msg.textContent = friendlyError('unavailable');
+        btn.disabled = false;
+    }
+}
 
 // ===== SENDING A CART TO A CHAIN =====
 // The chain's content script (its *_injector.js) picks the cart up from storage and fills the cart on the site.

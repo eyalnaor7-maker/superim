@@ -11,7 +11,7 @@ BASE_FILES = [
     "manifest.json", "popup.html", "popup.js", "settings.html", "settings.js",
     "branch_service.js", "supabase_config.js", "safe_html.js", "victory_match.js",
     "results_view.js", "popup.css", "cities.js", "sphere.js", "background.js",
-    "address.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css", "vendor/leaflet/LICENSE",
+    "address.js", "auth.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css", "vendor/leaflet/LICENSE",
 ]
 SECRET_PATTERNS = [
     re.compile(r"AIza[0-9A-Za-z_-]{20,}"),
