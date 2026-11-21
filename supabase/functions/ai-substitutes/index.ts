@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
 מועמדים:
 ` + lists[it.barcode].map(c => `- ${c.barcode} | ${c.name} | נמכר ב: ${c.stores}`).join('\n')).join('\n\n');
 
-    const model = Deno.env.get('GEMINI_MODEL') || 'gemini-2.5-flash';
+    const model = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-latest'; // Google's alias for its current Flash model: 2.5 is closed to new keys
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': Deno.env.get('GEMINI_API_KEY') || '' },
