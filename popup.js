@@ -2174,10 +2174,13 @@ async function compareCarts(saved) {
 
             html += '</div></div>';
             const aiItems = [...inStockItems, ...outOfStockItems].filter(i => i.isShufersalMissing || i.isRamiMissing || i.isVictoryMissing || i.isMCKMissing);
-            if (aiItems.length > 0) html += `<div class="win" style="margin:0 14px 16px; padding:12px">
-                <div class="sub">חסרים מוצרים בחלק מהרשתות? ה-AI יחפש מוצרים חלופיים דומים. פעם אחת ביום לכל משתמש.</div>
+            // the card is always there, so the shopper can see why AI is or is not offered for this cart
+            const notInDb = missingItems.length ? ` ${missingItems.length === 1 ? 'מוצר אחד לא נמצא' : missingItems.length + ' מוצרים לא נמצאו'} במאגר שלנו, ולהם אין עדיין חיפוש תחליפים.` : '';
+            html += `<div class="win" style="margin:0 14px 16px; padding:12px"><b>תחליפים עם AI</b>` + (aiItems.length > 0
+                ? `<div class="sub">${aiItems.length === 1 ? 'מוצר אחד חסר' : aiItems.length + ' מוצרים חסרים'} בחלק מהרשתות. ה-AI יחפש מוצרים חלופיים דומים. פעם אחת ביום לכל משתמש.${notInDb}</div>
                 <button class="cta" id="aiSubBtn" type="button" style="margin-top:8px">חיפוש תחליפים עם AI</button>
-                <div id="aiSubMsg" class="sub c" role="status" aria-live="polite"></div></div>`;
+                <div id="aiSubMsg" class="sub c" role="status" aria-live="polite"></div>`
+                : `<div class="sub">כל המוצרים שזוהו נמצאו בכל הרשתות, אז אין צורך בתחליפים לסל הזה.${notInDb}</div>`) + `</div>`;
             resultDiv.innerHTML = html;
             document.getElementById('startView').hidden = true;
             statusDiv.innerHTML = 'סיימנו';
