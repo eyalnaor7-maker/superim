@@ -1,5 +1,6 @@
 // ai-substitutes: for products a chain does not sell, an AI picks up to two similar products from our own database,
 // and they are saved as the product's substitutes, so every later comparison tries them automatically.
+// Products the database does not know at all (a chain's own brand) are matched to one known product (table ai_matches).
 // Signed-in users only (Supabase checks the token before this runs); once a day per user; owners have no limit.
 // Secrets (Supabase > Edge Functions > Secrets): GEMINI_API_KEY, optional GEMINI_MODEL.
 import { createClient } from 'npm:@supabase/supabase-js@2.119.2';
@@ -12,6 +13,7 @@ const cors = {
 const reply = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 const STORES = ['shufersal', 'rami_levy', 'victory', 'machsanei_hashuk'];
+const POPUP_STORE: Record<string, string> = { shufersal: 'shufersal', ramiLevy: 'rami_levy', victory: 'victory', machsaneiHashuk: 'machsanei_hashuk' };
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -36,7 +38,11 @@ Deno.serve(async (req) => {
     }))
     .filter((i: any) => /^\d{4,14}$/.test(i.barcode) && i.name)
     .slice(0, 8);
-  if (!items.length) return reply({ error: 'bad_request' }, 400);
+  const unknown = (Array.isArray(body?.unknown) ? body.unknown : [])
+    .map((u: any) => ({ store: POPUP_STORE[String(u?.store)] || '', code: String(u?.code ?? ''), name: String(u?.name ?? '').slice(0, 120) }))
+    .filter((u: any) => u.store && /^[\w-]{1,40}$/.test(u.code) && u.name.length >= 2)
+    .slice(0, 8 - items.length);
+  if (!items.length && !unknown.length) return reply({ error: 'bad_request' }, 400);
 
   // the daily limit: the (user, day) primary key lets only the first request of the day through
   const { data: owner } = await admin.from('owners').select('user_id').eq('user_id', user.id).maybeSingle();
@@ -54,6 +60,11 @@ Deno.serve(async (req) => {
       if (error) throw error;
       lists[it.barcode] = data || [];
     }
+    for (const [n, u] of unknown.entries()) {
+      const { data, error } = await admin.rpc('ai_candidates', { p_name: u.name, p_exclude: '', p_limit: 12 });
+      if (error) throw error;
+      lists['u' + n] = data || [];
+    }
     const prompt = `אתה עוזר לקונה בסופרמרקט בישראל. לכל מוצר מקורי מופיעה רשימת מועמדים.
 בחר לכל מוצר עד 2 מועמדים שהם תחליף אמיתי: אותו סוג מוצר ובגודל דומה (מותג אחר מותר).
 העדף מועמדים שנמכרים ברשתות שבהן המקורי חסר. אם אין תחליף מתאים, החזר רשימה ריקה.
@@ -61,7 +72,13 @@ Deno.serve(async (req) => {
 
 ` + items.map((it: any) => `מוצר ${it.barcode}: ${it.name}. חסר ב: ${it.missingIn.join(', ') || 'לא ידוע'}.
 מועמדים:
-` + lists[it.barcode].map(c => `- ${c.barcode} | ${c.name} | נמכר ב: ${c.stores}`).join('\n')).join('\n\n');
+` + lists[it.barcode].map(c => `- ${c.barcode} | ${c.name} | נמכר ב: ${c.stores}`).join('\n')).join('\n\n')
+      + (unknown.length ? `
+
+מוצרים שאינם במאגר (למשל מותג פרטי של רשת). לכל אחד בחר מועמד אחד בלבד: המוצר המקביל ביותר (אותו סוג וגודל דומה), או רשימה ריקה. המפתח הוא המזהה (u0, u1...).
+` + unknown.map((u: any, n: number) => `מוצר u${n}: ${u.name} (מהרשת ${u.store}).
+מועמדים:
+` + lists['u' + n].map(c => `- ${c.barcode} | ${c.name} | נמכר ב: ${c.stores}`).join('\n')).join('\n\n') : '');
 
     const model = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-latest'; // Google's alias for its current Flash model: 2.5 is closed to new keys
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -85,7 +102,16 @@ Deno.serve(async (req) => {
       if (error) { console.error('substitute not saved', it.barcode, error.message); continue; }
       found.push({ barcode: 'P_' + it.barcode, name: it.name, substitutes: chosen.map((b: string) => ({ barcode: b, name: allowed.get(b) })) });
     }
-    await log(user.id, 'ai_substitutes', { asked: items.length, found: found.length, owner: !!owner });
+    for (const [n, u] of unknown.entries()) {
+      const allowed = new Map(lists['u' + n].map(c => [c.barcode, c.name]));
+      const pick = (Array.isArray(picks?.['u' + n]) ? picks['u' + n] : []).map(String)
+        .map((b: string) => (b.startsWith('P_') ? b : 'P_' + b)).find((b: string) => allowed.has(b));
+      if (!pick) continue;
+      const { error } = await admin.from('ai_matches').upsert({ store_name: u.store, store_code: u.code, barcode: pick, name: u.name }, { onConflict: 'store_name,store_code' });
+      if (error) { console.error('match not saved', u.code, error.message); continue; }
+      found.push({ code: u.code, name: u.name, substitutes: [{ barcode: pick, name: allowed.get(pick) }] });
+    }
+    await log(user.id, 'ai_substitutes', { asked: items.length + unknown.length, found: found.length, owner: !!owner });
     return reply({ ok: true, found });
   } catch (e) {
     console.error('ai-substitutes failed', e); // details stay in the server log; the user gets a plain code

@@ -1434,6 +1434,37 @@ async function compareCarts(saved) {
             }
         }
 
+        // products our database does not know (e.g. a chain's own brand): use the product the AI matched them to, if any
+        const DB_STORE = { shufersal: 'shufersal', ramiLevy: 'rami_levy', victory: 'victory', machsaneiHashuk: 'machsanei_hashuk' };
+        const isKnown = item => codeStore === 'ramiLevy' ? !!findShufersalDataByRamiLevy(item.code, pricesData)
+            : !!(pricesData[item.code] || pricesData['P_' + String(item.code).replace(/^P_/, '')]);
+        const unknownItems = rawCartItems.filter(i => !isKnown(i));
+        if (unknownItems.length && headers) try {
+            const q = new URLSearchParams({
+                select: 'store_code,products(barcode,name,store_products(store_name,store_code,price,updated_at))',
+                store_name: `eq.${DB_STORE[codeStore]}`,
+                store_code: `in.(${unknownItems.map(i => `"${String(i.code).replace(/["\\]/g, '')}"`).join(',')})`
+            });
+            const matches = await fetch(`${SUPABASE_URL}/rest/v1/ai_matches?${q}`, { headers }).then(r => r.ok ? r.json() : []);
+            matches.forEach(m => {
+                const p = m.products;
+                if (!p) return;
+                const data = { name: p.name, substitutes: [] };
+                (p.store_products || []).forEach(sp => {
+                    data[`${sp.store_name}_price`] = sp.price != null ? parseFloat(sp.price) : null;
+                    data[`${sp.store_name}_code`] = sp.store_code;
+                    data[`${sp.store_name}_updated_at`] = sp.updated_at || null;
+                    if (sp.store_name === 'victory') data.victory_retailer_id = sp.store_code;
+                });
+                unknownItems.filter(i => String(i.code) === m.store_code).forEach(i => {
+                    i.name = `${i.name} (מושווה מול: ${p.name})`;
+                    // Rami Levy lines are found by their Rami Levy id; the others by barcode, so they take the match's barcode
+                    if (codeStore === 'ramiLevy') pricesData[p.barcode] = { ...data, rami_levy_code: i.code };
+                    else { i.code = p.barcode; pricesData[p.barcode] = data; }
+                });
+            });
+        } catch (e) { console.warn('AI matches lookup failed', e); }
+
         const substituteBarcodes = [];
         Object.values(pricesData).forEach(item => {
             if (item.substitutes) {
@@ -2175,12 +2206,12 @@ async function compareCarts(saved) {
             html += '</div></div>';
             const aiItems = [...inStockItems, ...outOfStockItems].filter(i => i.isShufersalMissing || i.isRamiMissing || i.isVictoryMissing || i.isMCKMissing);
             // the card is always there, so the shopper can see why AI is or is not offered for this cart
-            const notInDb = missingItems.length ? ` ${missingItems.length === 1 ? 'מוצר אחד לא נמצא' : missingItems.length + ' מוצרים לא נמצאו'} במאגר שלנו, ולהם אין עדיין חיפוש תחליפים.` : '';
-            html += `<div class="win" style="margin:0 14px 16px; padding:12px"><b>תחליפים עם AI</b>` + (aiItems.length > 0
-                ? `<div class="sub">${aiItems.length === 1 ? 'מוצר אחד חסר' : aiItems.length + ' מוצרים חסרים'} בחלק מהרשתות. ה-AI יחפש מוצרים חלופיים דומים. פעם אחת ביום לכל משתמש.${notInDb}</div>
+            const aiCount = aiItems.length + missingItems.length;
+            html += `<div class="win" style="margin:0 14px 16px; padding:12px"><b>תחליפים עם AI</b>` + (aiCount > 0
+                ? `<div class="sub">${aiCount === 1 ? 'מוצר אחד חסר' : aiCount + ' מוצרים חסרים'} בחלק מהרשתות או במאגר שלנו (למשל מותג פרטי של רשת). ה-AI יחפש מוצרים מקבילים. פעם אחת ביום לכל משתמש.</div>
                 <button class="cta" id="aiSubBtn" type="button" style="margin-top:8px">חיפוש תחליפים עם AI</button>
                 <div id="aiSubMsg" class="sub c" role="status" aria-live="polite"></div>`
-                : `<div class="sub">כל המוצרים שזוהו נמצאו בכל הרשתות, אז אין צורך בתחליפים לסל הזה.${notInDb}</div>`) + `</div>`;
+                : `<div class="sub">כל המוצרים נמצאו בכל הרשתות, אז אין צורך בתחליפים לסל הזה.</div>`) + `</div>`;
             resultDiv.innerHTML = html;
             document.getElementById('startView').hidden = true;
             statusDiv.innerHTML = 'סיימנו';
@@ -2200,7 +2231,7 @@ async function compareCarts(saved) {
 
             finalCartToTransfer = inStockItems;
 
-            document.getElementById('aiSubBtn')?.addEventListener('click', () => askAiSubstitutes(aiItems, saved));
+            document.getElementById('aiSubBtn')?.addEventListener('click', () => askAiSubstitutes(aiItems, saved, missingItems.map(i => ({ store: codeStore, code: i.code, name: i.name }))));
             document.getElementById('compareAgain')?.addEventListener('click', () => compareCarts(saved));
             document.getElementById('detailsToggle')?.addEventListener('click', () => {
                 document.getElementById('detailsContent').classList.toggle('open');
@@ -2233,7 +2264,7 @@ async function compareCarts(saved) {
 
 
 // ===== AI SUBSTITUTES (needs an account; server limits it to once a day) =====
-async function askAiSubstitutes(items, saved) {
+async function askAiSubstitutes(items, saved, unknown = []) {
     const btn = document.getElementById('aiSubBtn');
     const msg = document.getElementById('aiSubMsg');
     const stores = [['isShufersalMissing', 'shufersal'], ['isRamiMissing', 'rami_levy'], ['isVictoryMissing', 'victory'], ['isMCKMissing', 'machsanei_hashuk']];
@@ -2247,7 +2278,10 @@ async function askAiSubstitutes(items, saved) {
             return;
         }
         msg.textContent = 'מחפשים תחליפים...';
-        const body = { items: items.slice(0, 8).map(i => ({ barcode: i.shufersal_code, name: i.name, missingIn: stores.filter(([flag]) => i[flag]).map(([, s]) => s) })) };
+        const body = {
+            items: items.slice(0, 8).map(i => ({ barcode: i.shufersal_code, name: i.name, missingIn: stores.filter(([flag]) => i[flag]).map(([, s]) => s) })),
+            unknown: unknown.slice(0, Math.max(0, 8 - items.length))
+        };
         const res = await fetch(`${SUPABASE_URL}/functions/v1/ai-substitutes`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
