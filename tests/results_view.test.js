@@ -113,3 +113,58 @@ test('renderHistory: a cart with its scanned lines can be opened and compared no
     assert.strictEqual(html.split('data-restore="0"').length - 1, 1);
     assert.ok(!renderHistory([{ at: 0, store: 'victory', totals: {}, items: [{ name: 'a', quantity: 1 }] }]).includes('data-restore')); // carts saved before 2026-11-16
 });
+
+const { renderOutlierDeals, renderDetailsItem } = require('../results_view.js');
+
+test('renderOutlierDeals: renders expandable banner, escapes fields, empty array returns empty string', () => {
+    assert.strictEqual(renderOutlierDeals([]), '');
+    const html = renderOutlierDeals([
+        { name: 'קפה <טורקי>', bestStore: 'victory', bestStoreName: 'ויקטורי & שות', bestPrice: 18.9, refPrice: 29.9, saving: 11, pct: 37 }
+    ]);
+    assert.ok(html.includes('🔥 מבצעים חריגים בעגלה שלך (1)'));
+    assert.ok(html.includes('קפה &lt;טורקי&gt;') && !html.includes('קפה <טורקי>'));
+    assert.ok(html.includes('₪18.90') && html.includes('בויקטורי &amp; שות') && html.includes('במקום') && html.includes('₪29.90'));
+    assert.ok(html.includes('חיסכון של 37%'));
+
+    const { orderedStores, sortable } = stores();
+    const summaryWithDeals = renderStoreSummary({
+        orderedStores, sortable, activeStore: 'shufersal',
+        deals: [{ name: 'קפה 200 גרם', bestStore: 'ramiLevy', bestStoreName: 'רמי לוי', bestPrice: 18.9, refPrice: 29.9, saving: 11, pct: 37 }]
+    });
+    assert.ok(summaryWithDeals.includes('🔥 מבצעים חריגים בעגלה שלך (1)'));
+});
+
+test('renderDetailsItem: shows unit price hint and AI feedback button with proper escaping', () => {
+    const aiSubHtml = renderDetailsItem({
+        name: 'חלב 1 ליטר',
+        quantity: 2,
+        original_barcode: 'P_7290000000012',
+        substitute_status: 'ai',
+        unit_qty: 1000,
+        unit_type: 'ml',
+        shufersal_total: 14,
+        rami_levy_total: 12,
+        rami_price_source: 'live-substitute',
+        rami_sub_name: 'חלב טרה <1 ליטר>',
+        victory_total: 13,
+        mck_total: null
+    }, { showShufersal: true, showRami: true, showVictory: true, showMCK: true, isReplaced: true });
+
+    assert.ok(aiSubHtml.includes('₪0.60 ל-100 מ&quot;ל'));
+    assert.ok(aiSubHtml.includes('data-bad-sub="P_7290000000012"'));
+    assert.ok(aiSubHtml.includes('👎 לא מתאים'));
+    assert.ok(aiSubHtml.includes('חלב טרה &lt;1 ליטר&gt;') && !aiSubHtml.includes('חלב טרה <1 ליטר>'));
+
+    const aiMatchHtml = renderDetailsItem({
+        name: 'גבינה לבנה 250 גרם',
+        quantity: 1,
+        aiMatch: { storeName: 'victory', storeCode: 'victory-55' },
+        shufersal_total: 5,
+        victory_total: 4.5
+    }, { showShufersal: true, showRami: false, showVictory: true, showMCK: false, isReplaced: false });
+
+    assert.ok(aiMatchHtml.includes('₪1.80 ל-100 גרם'));
+    assert.ok(aiMatchHtml.includes('data-bad-match="1"'));
+    assert.ok(aiMatchHtml.includes('data-store-name="victory"'));
+    assert.ok(aiMatchHtml.includes('data-store-code="victory-55"'));
+});

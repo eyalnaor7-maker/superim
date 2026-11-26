@@ -38,6 +38,16 @@ td.n { text-align: end; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fb:last-child, tr:last-child td { border-bottom: 0; }
 .fb .meta { font-size: 12px; color: var(--sub); }
 .empty { color: var(--sub); text-align: center; padding: 24px 0; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.health-card { border: 1px solid var(--ln); border-inline-start-width: 5px; border-radius: 12px; padding: 14px; background: #fff; }
+.health-ok { border-inline-start-color: #10b981; background: #ecfdf5; }
+.health-warn { border-inline-start-color: #f59e0b; background: #fffbeb; }
+.health-bad { border-inline-start-color: #ef4444; background: #fef2f2; }
+.health-none { border-inline-start-color: #94a3b8; background: #f8fafc; }
+.health-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 6px; }
+.health-pct { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.health-meta { font-size: 12px; color: var(--sub); margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px 12px; }
+td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; direction: ltr; text-align: end; }
 #login { max-width: 380px; margin: 0 auto; text-align: center; }
 #login input { width: 100%; padding: 11px; margin: 12px 0; border: 1px solid var(--ln); border-radius: 10px; text-align: center; }
 #login button { width: 100%; height: 44px; border: 0; border-radius: 12px; background: linear-gradient(180deg,#fcd34d,#f59e0b); color: #422006; font-weight: 600; cursor: pointer; }
@@ -71,11 +81,15 @@ td.n { text-align: end; font-variant-numeric: tabular-nums; font-weight: 600; }
     <div id="dash" hidden>
         <div class="kpis" id="kpis"></div>
         <div class="grid">
+            <div class="card wide"><h2>רמזור תקינות רשתות</h2><div class="hint">🟢 מעל 85% הצלחה · 🟡 50%–84% · 🔴 מתחת ל-50%</div><div class="health-grid" id="storeHealth"></div></div>
             <div class="card wide"><h2>פעילות לפי יום</h2><div class="hint">כמה השוואות נעשו, וכמה פעמים ביקשו לבנות את העגלה ברשת אחרת</div><div class="chart"><canvas id="cDay"></canvas></div></div>
             <div class="card"><h2>איזו רשת יצאה הכי זולה</h2><div class="hint">מספר ההשוואות שבהן כל רשת הייתה הזולה ביותר</div><div class="chart"><canvas id="cCheap"></canvas></div></div>
             <div class="card"><h2>מאיפה באים ולאן עוברים</h2><div class="hint">באיזו רשת הייתה העגלה המקורית, ולאיזו רשת ביקשו להעביר אותה</div><div class="chart"><canvas id="cFlow"></canvas></div></div>
             <div class="card"><h2>ערים מובילות</h2><div class="hint">עיר עם פחות מ-3 השוואות לא מוצגת, כדי לא לזהות משתמש יחיד</div><table id="tCities"></table></div>
             <div class="card"><h2>המוצרים שהושוו הכי הרבה</h2><div class="hint">ספירה כללית לפי מוצר, בלי קשר לסל מסוים</div><table id="tProducts"></table></div>
+            <div class="card wide"><h2>המוצרים החסרים המבוקשים ביותר</h2><div class="hint">20 המוצרים שחסרו הכי הרבה פעמים בהשוואות</div><table id="tMissing"></table></div>
+            <div class="card wide"><h2>בקרת איכות התאמות AI</h2><div class="hint">תחליפים ומותגים פרטיים אחרונים שהוצעו ע״י AI, בחירות קונים ודיווחי שגיאה</div><table id="tAiReview"></table></div>
+            <div class="card wide"><h2>ניטור שגיאות בתוסף</h2><div class="hint">תקלות טכניות אנונימיות אחרונות מהדפדפנים (ללא מידע מזהה)</div><table id="tClientErrors"></table></div>
             <div class="card wide"><h2>יומן אבטחה</h2><div class="hint">30 האירועים האחרונים: התחברויות, מחיקת חשבון, שימוש ב-AI, כניסות לדשבורד</div><table id="tSecurity"></table></div>
             <div class="card wide"><h2>משוב מהמשתמשים</h2><div class="hint">50 ההודעות האחרונות</div><div id="fbList"></div></div>
         </div>
@@ -89,6 +103,12 @@ const SUPABASE_URL = 'https://icdethibkzwzguwmfoef.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_AOPxu8pmh_wCqqFFT_w_xg_NDvgf3da';
 
 const STORES = { shufersal: ['שופרסל', '#e11d48'], ramiLevy: ['רמי לוי', '#2563eb'], victory: ['ויקטורי', '#f97316'], machsaneiHashuk: ['מחסני השוק', '#7c3aed'] };
+const STORE_NAMES = {
+    shufersal: 'שופרסל',
+    ramiLevy: 'רמי לוי', rami_levy: 'רמי לוי',
+    victory: 'ויקטורי',
+    machsaneiHashuk: 'מחסני השוק', machsanei_hashuk: 'מחסני השוק'
+};
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $ = id => document.getElementById(id);
 const money = n => '₪' + Number(n || 0).toLocaleString('he-IL', { maximumFractionDigits: 0 });
@@ -103,15 +123,46 @@ function demoData(days) {
     const comparisons = by_day.reduce((s, d) => s + d.comparisons, 0), switches = by_day.reduce((s, d) => s + d.switches, 0);
     return {
         totals: { comparisons, switches, saving_sum: comparisons * 21.4, saving_avg: 34.2, with_saving: Math.round(comparisons * .63), cart_avg: 23.6, matched_pct: 87 },
+        accounts: 142,
+        ai_uses: 68,
         by_day,
         cheapest: { ramiLevy: Math.round(comparisons * .38), machsaneiHashuk: Math.round(comparisons * .27), victory: Math.round(comparisons * .2), shufersal: Math.round(comparisons * .15) },
         active: { shufersal: Math.round(comparisons * .52), ramiLevy: Math.round(comparisons * .26), victory: Math.round(comparisons * .13), machsaneiHashuk: Math.round(comparisons * .09) },
         switch_to: { ramiLevy: Math.round(switches * .44), machsaneiHashuk: Math.round(switches * .25), victory: Math.round(switches * .2), shufersal: Math.round(switches * .11) },
         cities: [['באר שבע', 212], ['תל אביב - יפו', 148], ['חיפה', 96], ['ירושלים', 81], ['אשדוד', 54], ['עומר', 22]].map(([city, count]) => ({ city, count })),
         products: [['חלב תנובה 3% 1 ליטר', 318], ['ביצים L 12 יח׳', 264], ['קוטג׳ 5% 250 גרם', 231], ['לחם אחיד פרוס', 187], ['נוטרילון 3 - 800 גרם', 92], ['שמן קנולה 1 ליטר', 88]].map(([name, count]) => ({ name, count })),
+        store_health: [
+            { store: 'shufersal', checks: 420, success_pct: 97, avg_matched: 22.8, avg_sec: 1.4 },
+            { store: 'rami_levy', checks: 418, success_pct: 91, avg_matched: 20.9, avg_sec: 2.1 },
+            { store: 'victory', checks: 395, success_pct: 74, avg_matched: 18.2, avg_sec: 4.8 },
+            { store: 'machsanei_hashuk', checks: 360, success_pct: 46, avg_matched: 14.5, avg_sec: 6.3 }
+        ],
+        missing_products: [
+            { store: 'victory', code: '7290112491234', name: 'חלב שיבולת שועל אלפרו 1 ליטר', count: 47 },
+            { store: 'machsanei_hashuk', code: '7290000145129', name: 'יוגורט פרו 20 גרם חלבון תות', count: 39 },
+            { store: 'rami_levy', code: '7290107933124', name: 'גבינה צהובה עמק 28% 400 גרם', count: 31 },
+            { store: 'shufersal', code: 'P_7290014328910', name: 'טחינה הר ברכה 500 גרם', count: 24 },
+            { store: 'victory', code: '7290008464697', name: 'בירה מכבי שישייה 330 מ"ל', count: 19 }
+        ],
+        ai_review: [
+            { kind: 'תחליף', original: 'קוטג׳ תנובה 5% 250 גרם', picked: 'קוטג׳ טרה 5% 250 גרם', picks: 34, neg_votes: 1 },
+            { kind: 'מותג פרטי', original: 'שמן זית שופרסל 750 מ"ל', picked: 'שמן זית יד מרדכי 750 מ"ל', picks: 21, neg_votes: 0 },
+            { kind: 'תחליף', original: 'נוטרילון שלב 3 800 גרם', picked: 'מטרנה שלב 3 700 גרם', picks: 12, neg_votes: 4 },
+            { kind: 'מותג פרטי', original: 'נייר טואלט רמי לוי 32 גלילים', picked: 'נייר טואלט לילי 32 גלילים', picks: 18, neg_votes: 1 }
+        ],
+        client_errors: [
+            { at: new Date(Date.now() - 35 * 6e4).toISOString(), store: 'machsanei_hashuk', stage: 'search', error_code: 'timeout', version: '2.3' },
+            { at: new Date(Date.now() - 3 * 36e5).toISOString(), store: 'victory', stage: 'delivery', error_code: 'rate_limited', version: '2.3' },
+            { at: new Date(Date.now() - 9 * 36e5).toISOString(), store: 'rami_levy', stage: 'cart_scan', error_code: 'empty_dom', version: '2.3' }
+        ],
+        security: [
+            { at: new Date(Date.now() - 20 * 6e4).toISOString(), event: 'ai_substitutes' },
+            { at: new Date(Date.now() - 2 * 36e5).toISOString(), event: 'sign_in' },
+            { at: new Date(Date.now() - 12 * 36e5).toISOString(), event: 'dashboard_login' }
+        ],
         feedback: [
-            { at: new Date(Date.now() - 2 * 36e5).toISOString(), message: 'התוסף חסך לי 60 שקל בקנייה השבועית, תודה! היה נחמד לראות גם דמי משלוח.', contact: null, version: '2.2' },
-            { at: new Date(Date.now() - 30 * 36e5).toISOString(), message: 'במחסני השוק חלק מהמוצרים לא עברו לעגלה.', contact: 'דוגמה בלבד', version: '2.2' }
+            { at: new Date(Date.now() - 2 * 36e5).toISOString(), message: 'התוסף חסך לי 60 שקל בקנייה השבועית, תודה! היה נחמד לראות גם דמי משלוח.', contact: null, version: '2.3' },
+            { at: new Date(Date.now() - 30 * 36e5).toISOString(), message: 'במחסני השוק חלק מהמוצרים לא עברו לעגלה.', contact: 'דוגמה בלבד', version: '2.3' }
         ]
     };
 }
@@ -134,11 +185,52 @@ async function fetchData(key, days) {
 // All text from the database goes through textContent: feedback is written by strangers.
 function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
 
-function table(node, head, rows) {
+function table(node, head, rows, colClasses = null) {
     node.replaceChildren();
     if (!rows.length) { node.append(el('caption', 'אין עדיין נתונים', 'empty')); return; }
     const tr = el('tr'); head.forEach(h => tr.append(el('th', h))); node.append(tr);
-    rows.forEach(r => { const row = el('tr'); r.forEach((c, i) => row.append(el('td', c, i === r.length - 1 ? 'n' : ''))); node.append(row); });
+    rows.forEach(r => {
+        const row = el('tr');
+        r.forEach((c, i) => {
+            const cls = colClasses ? (colClasses[i] || '') : (i === r.length - 1 ? 'n' : '');
+            row.append(el('td', c, cls));
+        });
+        node.append(row);
+    });
+}
+
+function renderStoreHealth(rawHealth) {
+    const host = $('storeHealth');
+    const items = Array.isArray(rawHealth)
+        ? rawHealth
+        : (rawHealth && typeof rawHealth === 'object'
+            ? Object.entries(rawHealth).map(([store, v]) => ({ store, ...(v || {}) }))
+            : []);
+    if (!items.length) {
+        host.replaceChildren(el('div', 'אין עדיין נתוני תקינות רשתות', 'empty'));
+        return;
+    }
+    host.replaceChildren(...items.map(x => {
+        const key = x.store || x.store_name || '';
+        const name = STORE_NAMES[key] || key || '—';
+        const checks = Number(x.checks ?? x.total ?? x.count ?? 0);
+        const pct = Math.round(Number(x.success_pct ?? x.success_rate ?? (checks ? 100 * (x.ok ?? x.successes ?? 0) / checks : 0)));
+        const avgMatched = Number(x.avg_matched ?? x.matched_avg ?? x.avg_matched_items ?? 0);
+        const avgSec = x.avg_sec != null ? Number(x.avg_sec) : (x.avg_ms != null ? Number(x.avg_ms) / 1000 : (x.avg_duration_ms != null ? Number(x.avg_duration_ms) / 1000 : 0));
+        const light = !checks ? ['⚪', 'health-none'] : pct >= 85 ? ['🟢', 'health-ok'] : pct >= 50 ? ['🟡', 'health-warn'] : ['🔴', 'health-bad'];
+
+        const card = el('div', null, `health-card ${light[1]}`);
+        const head = el('div', null, 'health-head');
+        head.append(el('span', `${light[0]} ${name}`), el('span', `${checks.toLocaleString('he-IL')} בדיקות`));
+        const pctEl = el('div', checks ? `${pct}%` : '—', 'health-pct');
+        const meta = el('div', null, 'health-meta');
+        meta.append(
+            el('span', `ממוצע פריטים שהותאמו: ${avgMatched.toLocaleString('he-IL', { maximumFractionDigits: 1 })}`),
+            el('span', `זמן תגובה ממוצע: ${avgSec.toFixed(1)} שנ׳`)
+        );
+        card.append(head, pctEl, meta);
+        return card;
+    }));
 }
 
 function chart(id, config) {
@@ -171,8 +263,45 @@ function render(d) {
         { label: 'ביקשו לעבור אליה', data: keys.map(k => d.switch_to[k] || 0), backgroundColor: '#10b981', borderRadius: 6 }
     ] }, options: { scales: { y: { beginAtZero: true, ticks: { precision: 0 } }, x: { grid: { display: false } } } } });
 
-    table($('tCities'), ['עיר', 'השוואות'], d.cities.map(c => [c.city, Number(c.count).toLocaleString('he-IL')]));
-    table($('tProducts'), ['מוצר', 'פעמים'], d.products.map(p => [p.name || p.barcode, Number(p.count).toLocaleString('he-IL')]));
+    renderStoreHealth(d.store_health);
+    table($('tCities'), ['עיר', 'השוואות'], (d.cities || []).map(c => [c.city, Number(c.count).toLocaleString('he-IL')]));
+    table($('tProducts'), ['מוצר', 'פעמים'], (d.products || []).map(p => [p.name || p.barcode, Number(p.count).toLocaleString('he-IL')]));
+    table(
+        $('tMissing'),
+        ['רשת', 'קוד', 'שם המוצר', 'מספר פעמים שחסר'],
+        (d.missing_products || []).slice(0, 20).map(m => [
+            STORE_NAMES[m.store || m.store_name] || m.store || m.store_name || '—',
+            String(m.code || m.store_code || m.barcode || '—'),
+            m.name || m.product_name || '—',
+            Number(m.count ?? m.missing_count ?? m.times ?? 0).toLocaleString('he-IL')
+        ]),
+        ['', 'mono', '', 'n']
+    );
+    const AI_KINDS = { substitute: 'תחליף', ai: 'תחליף', match: 'מותג פרטי', private_label: 'מותג פרטי' };
+    table(
+        $('tAiReview'),
+        ['סוג', 'מוצר מקורי', 'מוצר שנבחר', 'בחירות קונים', 'דיווחי שגיאה 👎'],
+        (d.ai_review || []).map(a => [
+            AI_KINDS[a.kind || a.type] || a.kind || a.type || 'תחליף AI',
+            a.original || a.original_name || a.original_barcode || '—',
+            a.picked || a.picked_name || a.substitute_name || a.matched_name || a.substitute_barcode_1 || '—',
+            Number(a.picks ?? a.chosen_count ?? a.selections ?? a.pos_votes ?? 0).toLocaleString('he-IL'),
+            Number(a.neg_votes ?? a.bad_votes ?? a.reports ?? 0).toLocaleString('he-IL')
+        ]),
+        ['', '', '', 'n', 'n']
+    );
+    table(
+        $('tClientErrors'),
+        ['זמן', 'רשת', 'שלב', 'קוד שגיאה', 'גרסה'],
+        (d.client_errors || []).map(e => [
+            e.at || e.created_at ? new Date(e.at || e.created_at).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }) : '—',
+            STORE_NAMES[e.store || e.store_name] || e.store || e.store_name || '—',
+            e.stage || e.step || '—',
+            String(e.error_code || e.code || e.error || '—'),
+            String(e.version || e.ext_version || '—')
+        ]),
+        ['', '', '', 'mono', 'n']
+    );
     const EVENTS = { sign_in: 'התחברות', sign_out: 'התנתקות', account_deleted: 'מחיקת חשבון', ai_substitutes: 'חיפוש תחליפים ב-AI', ai_limit_reached: 'AI: הגיע למכסה היומית', ai_failed: 'AI: שגיאה', dashboard_login: 'כניסה לדשבורד', dashboard_login_failed: 'סיסמה שגויה לדשבורד', dashboard_locked: 'הדשבורד ננעל' };
     table($('tSecurity'), ['מתי', 'אירוע'], (d.security || []).map(x => [new Date(x.at).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }), EVENTS[x.event] || x.event]));
     $('fbList').replaceChildren(...(d.feedback.length ? d.feedback.map(f => {

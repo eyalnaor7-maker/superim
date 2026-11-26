@@ -109,11 +109,72 @@ async function suggestStreets() {
     }
 }
 
-// Nominatim allows one request per second: calls run one after another with a gap.
+// Nominatim allows one request per second: responses are cached for 30 days (max 50 entries)
+// and uncached calls are strictly throttled with at least a 1,100ms gap.
+const GEO_CACHE_KEY = 'geoCache';
+const GEO_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const GEO_CACHE_MAX = 50;
+const NOMINATIM_THROTTLE_MS = 1100;
+
+function geoCacheKey(url) {
+    try {
+        const u = new URL(url);
+        if (u.pathname.endsWith('/search')) return `s:${(u.searchParams.get('q') || '').trim().toLowerCase()}`;
+        if (u.pathname.endsWith('/reverse')) return `r:${Number(u.searchParams.get('lat')).toFixed(4)},${Number(u.searchParams.get('lon')).toFixed(4)}`;
+    } catch {}
+    return url;
+}
+
+async function readGeoCache(key) {
+    try {
+        const stored = await chrome.storage.local.get(GEO_CACHE_KEY);
+        const cache = stored?.[GEO_CACHE_KEY];
+        if (!cache || typeof cache !== 'object') return null;
+        const entry = cache[key];
+        if (!entry || Date.now() - Number(entry.at || 0) >= GEO_CACHE_TTL_MS) return null;
+        cache[key] = { ...entry, usedAt: Date.now() };
+        chrome.storage.local.set({ [GEO_CACHE_KEY]: cache });
+        return entry.data;
+    } catch {
+        return null;
+    }
+}
+
+async function writeGeoCache(key, data) {
+    try {
+        const now = Date.now();
+        const stored = await chrome.storage.local.get(GEO_CACHE_KEY);
+        const raw = (stored?.[GEO_CACHE_KEY] && typeof stored[GEO_CACHE_KEY] === 'object') ? stored[GEO_CACHE_KEY] : {};
+        const fresh = Object.entries(raw)
+            .filter(([k, v]) => k !== key && v && (now - Number(v.at || 0) < GEO_CACHE_TTL_MS))
+            .sort((a, b) => Number(b[1].usedAt || b[1].at || 0) - Number(a[1].usedAt || a[1].at || 0))
+            .slice(0, GEO_CACHE_MAX - 1);
+        const next = Object.fromEntries(fresh);
+        next[key] = { data, at: now, usedAt: now };
+        await chrome.storage.local.set({ [GEO_CACHE_KEY]: next });
+    } catch {}
+}
+
 let nominatimQueue = Promise.resolve();
-function nominatim(url) {
-    const run = nominatimQueue.then(() => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }));
-    nominatimQueue = run.catch(() => {}).then(() => new Promise(resolve => setTimeout(resolve, 1100)));
+let lastNominatimAt = 0;
+async function nominatim(url) {
+    const key = geoCacheKey(url);
+    const cached = await readGeoCache(key);
+    if (cached !== null) return cached;
+
+    const run = nominatimQueue.then(async () => {
+        const again = await readGeoCache(key);
+        if (again !== null) return again;
+        const wait = Math.max(0, NOMINATIM_THROTTLE_MS - (Date.now() - lastNominatimAt));
+        if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+        lastNominatimAt = Date.now();
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(r.status);
+        const data = await r.json();
+        await writeGeoCache(key, data);
+        return data;
+    });
+    nominatimQueue = run.catch(() => {});
     return run;
 }
 
@@ -359,6 +420,13 @@ document.addEventListener('DOMContentLoaded', () => {
         $('acct-who').textContent = session?.user?.email || '';
     });
 
+    $('acct-google')?.addEventListener('click', async () => {
+        busy(true); say('פותח התחברות עם Google...');
+        const { error } = await sb.auth.signInWithGoogle();
+        busy(false);
+        if (error) return say(friendlyError(error));
+        say('התחברת בהצלחה עם Google');
+    });
     $('acct-signin').addEventListener('click', async () => {
         busy(true); say('מתחבר...');
         const { error } = await sb.auth.signInWithPassword({ email: $('acct-email').value.trim(), password: $('acct-pass').value });

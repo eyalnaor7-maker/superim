@@ -143,3 +143,35 @@ button { font-family: inherit; }
 .ai-switch input:checked::after { inset-inline-start: 16px; }
 .ai-switch input:focus-visible { outline: 2px solid #047857; outline-offset: 2px; }
 #aiQuota { margin-top: 4px; }
+
+/* outlier deals card */
+.deals-card {
+    margin: 8px 14px 12px; border: 1px solid #fed7aa; border-radius: 12px;
+    background: linear-gradient(180deg, #fffbeb, #fff7ed); overflow: hidden;
+}
+.deals-summary {
+    display: flex; align-items: center; justify-content: space-between; list-style: none;
+    padding: 10px 14px; font-size: 13px; font-weight: 700; color: #9a3412; cursor: pointer;
+}
+.deals-summary::-webkit-details-marker { display: none; }
+.deals-card[open] .deals-summary .toggle-arrow { transform: rotate(180deg); }
+.deals-list { border-top: 1px solid #fed7aa; padding: 6px 14px 10px; }
+.deal-row { padding: 6px 0; border-bottom: 1px dashed #fed7aa; font-size: 12px; }
+.deal-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.deal-name { display: block; font-weight: 600; color: var(--tx); }
+.deal-meta { display: block; font-size: 11px; color: #7c2d12; margin-top: 2px; }
+.deal-pct { font-weight: 700; color: var(--ok); }
+
+/* details unit pricing & AI feedback */
+.product-item-col { flex-direction: column; align-items: stretch; gap: 3px; }
+.product-item-main { display: flex; justify-content: space-between; align-items: center; gap: 6px; width: 100%; }
+.product-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.unit-price-hint { font-size: 11px; color: var(--sub); }
+.sub-badge { font-size: 10px; color: #f59e0b; margin-inline-start: 3px; }
+.product-sub-info { font-size: 11px; color: #b45309; padding-top: 2px; line-height: 1.35; }
+.bad-sub-btn {
+    border: 1px solid var(--ln); border-radius: 99px; background: var(--bg); color: var(--sub);
+    font-size: 10px; padding: 1px 7px; cursor: pointer; line-height: 1.4;
+}
+.bad-sub-btn:hover:not(:disabled) { border-color: #fca5a5; color: var(--bad); background: #fef2f2; }
+.bad-sub-btn:disabled { opacity: .65; cursor: default; }

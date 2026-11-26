@@ -1,8 +1,8 @@
 # קובץ העברה — התוסף "השוואת עגלות סופר"
 
-עודכן: 2026-11-21 · ענף: `overhaul/stage-1-security` (מסונכרן עם GitHub) · גרסת manifest: 2.3
+עודכן: 2026-11-26 · ענף: `overhaul/stage-1-security` (מסונכרן עם GitHub) · גרסת manifest: 2.3 · בדיקות: 58 ב-JS + 8 ב-Python עוברות
 
-מי שממשיך (אדם או Claude) קורא את המסמך הזה לפני כל דבר אחר. "נבדק" כאן אומר שנבדק בפועל, בתאריך שצוין. כל השאר מסומן כלא נבדק. היסטוריה מפורטת של השלבים הקודמים נמצאת בגרסאות קודמות של הקובץ הזה ב-git (למשל `git show eb2fa3b:docs/HANDOFF.md`).
+מי שממשיך (אדם או סוכן AI) קורא את המסמך הזה לפני כל דבר אחר. "נבדק" כאן אומר שנבדק בפועל, בתאריך שצוין. כל השאר מסומן כלא נבדק. היסטוריה מפורטת של השלבים הקודמים נמצאת בגרסאות קודמות של הקובץ הזה ב-git (למשל `git show eb2fa3b:docs/HANDOFF.md`).
 
 ---
 
@@ -38,23 +38,27 @@
 |---|---|
 | `manifest.json` | גרסה 2.3. `background.js` כ-service worker; אין `default_popup` |
 | `background.js` | לחיצה על סמל התוסף פותחת את `popup.html?tabId=N` כחלון נפרד שאפשר להזיז, במיקום האחרון |
-| `popup.html/.css/.js` | חלון ההשוואה. `compareCarts()` (גם עם סל שמור: `compareCarts(saved)`), סוכני מחירים לכל רשת בלשוניות נסתרות במקביל, דמי משלוח, "הסלים שלי", כרטיס AI |
-| `results_view.js` | תצוגת התוצאות והסלים השמורים (פונקציות טהורות, עם בדיקות) |
-| `settings.html/.js` | הגדרות בלשוניות: כתובת וסניפים (עיר, רחוב, מפה), פרופיל, החשבון שלי, פרטיות, משוב. `settings.html#account` פותח לשונית ישירות |
-| `auth.js` | לקוח ל-REST API של Supabase Auth (הרשמה, התחברות, רענון, התנתקות, rpc). הסשן ב-`chrome.storage.local` במפתח `sbSession`. `friendlyError()` לשגיאות בעברית |
+| `popup.html/.css/.js` | חלון ההשוואה. `compareCarts()` (גם עם סל שמור), מטמון מחירים ל-15 דקות, "הסלים שלי", כרטיס AI (3 חיפושים ביום), דיווח שגיאות ובריאות רשתות |
+| `cart_scanners.js` | קריאת העגלה הפעילה מארבע הרשתות (`scanShufersalCart`, `scanRamiLevyCart`, `scanVictoryCart`, `scanMCKCart`) |
+| `store_agents.js` | סוכני מחירים חיים בלשוניות נסתרות: שופרסל במקביל בקבוצות של 4, מחסני השוק בקריאה בלבד בלי נגיעה בעגלת המשתמש |
+| `unit_pricing.js` | חילוץ משקל/נפח (`parseUnitInfo`), מחיר ל-100 גרם/מ"ל/יח' (`formatUnitPrice`), זיהוי מבצעים חריגים (`detectOutlierDeals`), והתאמת מוצרים שקילים (`matchWeighedStaple`) |
+| `price_cache.js` | מטמון מחירים חיים ל-15 דקות (`chrome.storage.local.livePriceCache`) לפי רשת, סניף וקוד |
+| `results_view.js` | תצוגת התוצאות, באנר מבצעים חריגים, מחיר ליחידת מידה, כפתור 👎 לתחליפי AI והסלים השמורים |
+| `settings.html/.js` | הגדרות בלשוניות: כתובת וסניפים לכל הארץ (עם מטמון ומגבלת קצב ל-Nominatim), פרופיל, החשבון שלי (כולל התחברות עם Google), פרטיות מלאה, משוב |
+| `auth.js` | לקוח ל-REST API של Supabase Auth (הרשמה, התחברות, Google OAuth, רענון, התנתקות, rpc). הסשן ב-`chrome.storage.local` במפתח `sbSession` |
 | `address.js` | עזרי כתובת: עיר מרמי לוי, כתובת מ-Nominatim |
-| `branch_service.js`, `cities.js` | סניפים ורשימת 1,316 ערים |
+| `branch_service.js`, `cities.js` | סניפים ארציים לכל 4 הרשתות ורשימת 1,316 ערים |
 | `victory_match.js` | התאמת ויקטורי, מבצעי "N ב-X" (`victorySaleTotal`), דמי משלוח לפי יום (`deliveryFromDays`) |
 | `rami_guest.js` | עגלת אורח ברמי לוי, מחיר שורה (`ramiCartLines`), דמי משלוח (`ramiDeliveryFee`) |
 | `*_injector.js` | בונים את העגלה באתר הרשת מהעגלה ששמורה ב-`chrome.storage.local` |
 | `sphere.js` | אנימציית כדור הנקודות בזמן טעינה |
 | `vendor/leaflet/` | Leaflet 1.9.4 למפה בהגדרות |
-| `supabase/functions/ai-substitutes/index.ts` | פונקציית השרת של ה-AI (סעיף 4) |
-| `sql/` | כל קובצי ה-SQL שהורצו (סעיף 5) |
-| `public/dashboard.html`, `public/confirmed.html` | הדשבורד ודף "האימייל אושר" |
-| `data_pipeline/` | סקריפטי Python ישנים שבנו את המאגר מקובצי ה-XML של הרשתות (רצים מתוך התיקייה, עם `config.json` לידם) |
+| `supabase/functions/ai-substitutes/index.ts` | פונקציית השרת של ה-AI (גרסה 5 באוויר: מודל 3 שכבות, 3 חיפושים ביום, שמירה על תחליפים מאושרים) |
+| `sql/` | כל קובצי ה-SQL שהורצו (כולל `2026-11-26_stage2_security_ai_telemetry.sql`) |
+| `public/dashboard.html`, `public/confirmed.html`, `public/privacy.html` | הדשבורד (כולל רמזור רשתות, חוסרים, בקרת AI ושגיאות), דף האישור/Google ודף הצהרת הפרטיות לחנות |
+| `data_pipeline/sync_xml_catalog.py`, `.github/workflows/daily_catalog_sync.yml` | סנכרון אוטומטי יומי בענן של קובצי ה-XML הרשמיים של 4 הרשתות (הסקריפטים הישנים הועברו ל-`data_pipeline/legacy_archive/`) |
 | `README.md`, `docs/screenshots/` | דף הפתיחה באנגלית ב-GitHub (לקורות חיים) |
-| `pack_extension.py` | אריזה מרשימה סגורה (`BASE_FILES`) וסריקת סודות. קובץ חדש לתוסף חייב להיכנס לרשימה |
+| `pack_extension.py` | אריזה מרשימה סגורה (`BASE_FILES`, 29 קבצים) וסריקת סודות |
 
 ---
 

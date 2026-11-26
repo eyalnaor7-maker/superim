@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>מדיניות פרטיות — השוואת עגלות סופר</title>
+<style>
+:root { --bg:#f8fafc; --tx:#0f172a; --sub:#475569; --ln:#e2e8f0; --card:#fff;
+    --hero:linear-gradient(140deg,#064e3b,#047857 55%,#10b981); --sh:0 10px 30px -14px rgba(6,78,59,.35); --ok:#047857; }
+* { box-sizing: border-box; margin: 0; }
+body { font-family: system-ui, 'Segoe UI', Arial, sans-serif; font-size: 15px; line-height: 1.65; background: var(--bg); color: var(--tx); }
+.band { background: var(--hero); color: #fff; padding: 34px 20px 64px; }
+.band-in, main { max-width: 740px; margin: 0 auto; }
+.band h1 { font-size: 28px; font-weight: 700; }
+.band p { margin-top: 6px; font-size: 15px; opacity: .95; }
+main { margin-top: -36px; padding: 0 16px 48px; }
+.card { background: var(--card); border: 1px solid var(--ln); border-radius: 16px; box-shadow: var(--sh); padding: 24px 22px; }
+.card + .card { margin-top: 16px; }
+h2 { font-size: 18px; color: var(--ok); margin-bottom: 8px; }
+p + p { margin-top: 8px; }
+ul { margin: 8px 0 0; padding-inline-start: 20px; }
+li + li { margin-top: 6px; }
+.muted { color: var(--sub); font-size: 13px; }
+a { color: var(--ok); font-weight: 600; }
+</style>
+</head>
+<body>
+<header class="band">
+    <div class="band-in">
+        <h1>מדיניות פרטיות — השוואת עגלות סופר</h1>
+        <p>שקיפות מלאה לגבי המידע שהתוסף שומר במחשב שלך ומה נשלח החוצה.</p>
+    </div>
+</header>
+<main>
+    <section class="card">
+        <h2>1. עקרון המינימום ושליטה בידי המשתמש</h2>
+        <p>תוסף הדפדפן <strong>"השוואת עגלות סופר"</strong> נועד להשוות סלי קניות בין רשתות המזון בישראל (שופרסל, רמי לוי, ויקטורי ומחסני השוק). התוסף אינו מציג פרסומות, אינו מוכר מידע לצדדים שלישיים, ואינו עוקב אחר היסטוריית הגלישה הכללית שלך.</p>
+    </section>
+
+    <section class="card">
+        <h2>2. מידע שנשמר מקומית בדפדפן שלך</h2>
+        <p>הנתונים הבאים נשמרים באחסון הדפדפן שלך בלבד (<code>chrome.storage.local</code> ו-<code>chrome.storage.sync</code>):</p>
+        <ul>
+            <li>עגלות הקניות השמורות ("הסלים שלי") והשוואות מחירים אחרונות.</li>
+            <li>עיר, רחוב, נקודה במפה והסניפים שבחרת לכל רשת.</li>
+            <li>שם פרטי אופציונלי לפרופיל, וסטטוס המתג לשיתוף נתונים אנונימיים.</li>
+            <li>מטמון מקומי של חיפושי כתובות במפה (<code>geoCache</code>, עד 50 שאילתות אחרונות למשך 30 יום) כדי לצמצם פניות לרשת.</li>
+            <li>אסימון התחברות (Session) אם בחרת להתחבר לחשבון.</li>
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>3. נתונים סטטיסטיים אנונימיים וניטור תקלות</h2>
+        <p>כברירת מחדל (ניתן לכיבוי בכל עת בלשונית "פרטיות" בהגדרות התוסף), נשלחים נתונים סטטיסטיים מצטברים ואנונימיים לשרת Supabase:</p>
+        <ul>
+            <li>סכומי הסל, הרשת הזולה שנמצאה, העיר (מוצגת בדשבורד רק מ-3 השוואות ומעלה), ושמות/כמויות מוצרים כלליים ללא קשר לסל של משתמש יחיד.</li>
+            <li>דיווחי תקינות ושגיאות טכניות אנונימיות (<code>log_event</code>, <code>log_client_error</code>) הכוללים רשת, שלב בתהליך, קוד שגיאה וגרסת התוסף — ללא שם, כתובת רחוב או מזהה אישי.</li>
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>4. חיפוש כתובות, סניפים ומפות</h2>
+        <p>כדי להתאים סניפים ולבדוק דמי משלוח ומפה, התוסף פונה ישירות לשירותים הבאים רק בעת הצורך:</p>
+        <ul>
+            <li><strong>רמי לוי</strong> — השלמת שמות רחובות, רשימת סניפים ובדיקת דמי משלוח לפי עיר ורחוב.</li>
+            <li><strong>ויקטורי ומחסני השוק</strong> — שליפת רשימות סניפים ציבוריות וזמינות/דמי משלוח לפי עיר.</li>
+            <li><strong>OpenStreetMap Nominatim</strong> — המרת עיר/רחוב לקואורדינטות על המפה והמרת לחיצה במפה לשם עיר ורחוב (בקצב מוגבל של בקשה אחת ל-1.1 שניות לכל היותר, עם שמירה במטמון מקומי ל-30 יום).</li>
+            <li><strong>Israel Hiking Map</strong> — טעינת אריחי המפה בעברית (© תורמי OpenStreetMap ו-Israel Hiking Map, לשימוש חופשי לא-מסחרי תחת רישיון CC BY-NC-SA).</li>
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>5. חשבון משתמש אופציונלי וחיפוש תחליפים ב-AI</h2>
+        <p>השימוש בתוסף אינו מחייב חשבון. חשבון נדרש רק כדי להפעיל חיפוש תחליפים חכם באמצעות AI (במכסה יומית):</p>
+        <ul>
+            <li><strong>ניהול חשבון (Supabase Auth)</strong> — בעת הרשמה או התחברות (באימייל וסיסמה או דרך Google OAuth), נשמרת כתובת האימייל שלך ומתועדת כתובת ה-IP ביומן האבטחה (<code>security_log</code>) לצורכי הגנה, אכיפת מכסה יומית ומניעת שימוש לרעה.</li>
+            <li><strong>חיפוש תחליפים עם AI</strong> — כאשר תלחץ על חיפוש תחליפים, יישלחו לשרת Supabase ול-Google Gemini רק שמות המוצרים והברקודים החסרים והרשתות שבהן הם חסרים, כדי לאתר מוצרים מקבילים.</li>
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>6. מחיקת מידע ויצירת קשר</h2>
+        <p>ניתן למחוק את החשבון לצמיתות בלחיצה אחת מתוך הגדרות התוסף ← <strong>החשבון שלי</strong> ← <strong>מחיקת החשבון</strong>. פעולה זו מוחקת את החשבון ונתוניו מהשרת וכן מנקה את כל הנתונים השמורים בדפדפן.</p>
+        <p>לשאלות, פניות פרטיות או בקשות מחיקה נוספות ניתן לפנות דרך לשונית <strong>"משוב"</strong> בהגדרות התוסף.</p>
+        <p class="muted" style="margin-top: 12px;">עודכן לאחרונה: נובמבר 2026</p>
+    </section>
+</main>
+</body>
+</html>

@@ -4,18 +4,46 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>האימייל אושר — השוואת עגלות</title>
+<title>אימות חשבון — השוואת עגלות</title>
 <style>
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, 'Segoe UI', Arial, sans-serif; background: #f8fafc; color: #0f172a; }
-.card { max-width: 420px; margin: 16px; padding: 28px; border-radius: 16px; background: #fff; border: 1px solid #e8edf3; box-shadow: 0 10px 30px -14px rgba(6,78,59,.35); text-align: center; line-height: 1.6; }
-h1 { font-size: 22px; color: #047857; margin: 0 0 8px; }
+.card { max-width: 440px; margin: 16px; padding: 28px; border-radius: 16px; background: #fff; border: 1px solid #e8edf3; box-shadow: 0 10px 30px -14px rgba(6,78,59,.35); text-align: center; line-height: 1.6; }
+h1 { font-size: 22px; color: #047857; margin: 0 0 10px; }
+h1.err { color: #b91c1c; }
 </style>
 </head>
 <body>
 <div class="card">
-    <h1>האימייל אושר</h1>
-    <p>אפשר לחזור לתוסף "השוואת עגלות סופר", לפתוח את ההגדרות ולהתחבר עם האימייל והסיסמה שבחרת.</p>
-    <p>אפשר לסגור את הדף הזה.</p>
+    <h1 id="title">האימייל אושר</h1>
+    <p id="msg">אפשר לחזור לתוסף "השוואת עגלות סופר", לפתוח את ההגדרות ולהתחבר עם האימייל והסיסמה שבחרת.</p>
+    <p id="sub">אפשר לסגור את הדף הזה.</p>
 </div>
+<script>
+(function () {
+    const hash = location.hash || '';
+    const query = new URLSearchParams(location.search);
+    const title = document.getElementById('title');
+    const msg = document.getElementById('msg');
+    const sub = document.getElementById('sub');
+
+    if (hash.includes('access_token=')) {
+        document.title = 'ההתחברות הושלמה — השוואת עגלות';
+        title.textContent = 'ההתחברות הושלמה בהצלחה!';
+        msg.textContent = 'ההתחברות הושלמה בהצלחה! אפשר לחזור לתוסף ולסגור לשונית זו.';
+        sub.textContent = '';
+    } else if (hash.includes('error=') || query.get('error')) {
+        document.title = 'שגיאה בהתחברות — השוואת עגלות';
+        title.className = 'err';
+        title.textContent = 'ההתחברות לא הושלמה';
+        msg.textContent = 'אפשר לסגור לשונית זו, לחזור להגדרות התוסף ולנסות שוב.';
+        sub.textContent = '';
+    } else if (query.has('code') || query.get('type') === 'signup') {
+        document.title = 'האימייל אושר — השוואת עגלות';
+        title.textContent = 'האימייל אושר';
+        msg.textContent = 'אפשר לחזור לתוסף "השוואת עגלות סופר", לפתוח את ההגדרות ולהתחבר לחשבון שלך.';
+        sub.textContent = 'אפשר לסגור לשונית זו.';
+    }
+})();
+</script>
 </body>
 </html>

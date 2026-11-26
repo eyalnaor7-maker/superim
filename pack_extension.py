@@ -10,6 +10,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 BASE_FILES = [
     "manifest.json", "popup.html", "popup.js", "settings.html", "settings.js",
     "branch_service.js", "supabase_config.js", "safe_html.js", "victory_match.js",
+    "unit_pricing.js", "price_cache.js", "cart_scanners.js", "store_agents.js",
     "results_view.js", "popup.css", "cities.js", "sphere.js", "background.js",
     "address.js", "auth.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css", "vendor/leaflet/LICENSE",
 ]

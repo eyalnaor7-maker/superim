@@ -1,0 +1,27 @@
+name: Daily XML Catalog Sync
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # 03:00 Israel winter / 04:00 Israel summer
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run daily PriceFull XML catalog sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python data_pipeline/sync_xml_catalog.py

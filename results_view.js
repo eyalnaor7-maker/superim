@@ -1,5 +1,8 @@
-// Pure view: builds the store-summary markup for the popup results screen.
+// Pure view: builds the store-summary markup, outlier deals banner, and details rows for the popup results screen.
 const _rvEsc = typeof module !== 'undefined' ? require('./safe_html.js').esc : esc;
+const _rvFormatUnitPrice = typeof module !== 'undefined'
+    ? require('./unit_pricing.js').formatUnitPrice
+    : (typeof formatUnitPrice === 'function' ? formatUnitPrice : () => '');
 
 const RV_COLORS = { shufersal: '#e11d48', ramiLevy: '#2563eb', victory: '#f97316', machsaneiHashuk: '#7c3aed' };
 const RV_SWITCH = {
@@ -24,7 +27,21 @@ function rvDeliveryLine(s) {
     return `<div class="sub">${text}${s.deliveryNote ? ' · ' + _rvEsc(s.deliveryNote) : ''}</div>`;
 }
 
-function renderStoreSummary({ orderedStores, sortable, activeStore, savedLabel }) {
+function renderOutlierDeals(deals) {
+    if (!Array.isArray(deals) || deals.length === 0) return '';
+    const rows = deals.map(d => {
+        const pct = Math.round(Number(d.pct) || 0);
+        return `<div class="deal-row">` +
+            `<span class="deal-name">${_rvEsc(d.name)}</span>` +
+            `<span class="deal-meta"><b class="num">${rvMoney(d.bestPrice)}</b> ב${_rvEsc(d.bestStoreName)} במקום <span class="num">${rvMoney(d.refPrice)}</span> · <span class="deal-pct">חיסכון של ${pct}%</span></span>` +
+            `</div>`;
+    }).join('');
+    return `<details class="deals-card">` +
+        `<summary class="deals-summary"><span>🔥 מבצעים חריגים בעגלה שלך (${deals.length})</span><span class="toggle-arrow" aria-hidden="true">▼</span></summary>` +
+        `<div class="deals-list">${rows}</div></details>`;
+}
+
+function renderStoreSummary({ orderedStores, sortable, activeStore, savedLabel, deals }) {
     // gap = what the shopper pays today for the products this store lacks. Adding it compares like with like:
     // a store that has 1 of 3 products is not "98% cheaper".
     const cmp = rvCompareTotal;
@@ -67,7 +84,66 @@ function renderStoreSummary({ orderedStores, sortable, activeStore, savedLabel }
         html += `<div class="row">${rvAvatar(s)}<div class="grow"><b>${_rvEsc(s.name)}</b>${sub}</div>` +
             `<div class="end">${end}${btn}</div></div>`;
     });
-    return html + '<div class="row"><button class="mini" id="compareAgain">להשוות שוב</button></div></div>';
+    html += '<div class="row"><button class="mini" id="compareAgain">להשוות שוב</button></div></div>';
+    if (Array.isArray(deals) && deals.length > 0) {
+        html += renderOutlierDeals(deals);
+    }
+    return html;
+}
+
+function renderAiFeedbackBtn(item, isReplaced) {
+    if (isReplaced && item.substitute_status === 'ai' && item.original_barcode) {
+        return `<button type="button" class="bad-sub-btn" data-bad-sub="${_rvEsc(item.original_barcode)}" title="דווח על תחליף לא מתאים">👎 לא מתאים</button>`;
+    }
+    const match = item.aiMatch || item.ai_match;
+    if (match && match.storeName && match.storeCode) {
+        return `<button type="button" class="bad-sub-btn" data-bad-match="1" data-store-name="${_rvEsc(match.storeName)}" data-store-code="${_rvEsc(match.storeCode)}" title="דווח על התאמה לא מתאימה">👎 לא מתאים</button>`;
+    }
+    return '';
+}
+
+function renderDetailsItem(item, opts = {}) {
+    const { showShufersal = true, showRami = true, showVictory = true, showMCK = true, isReplaced = false } = opts;
+    const subBadge = isSub => (isReplaced && isSub) ? '<span title="הוחלף בתחליף" class="sub-badge">תחליף</span>' : '';
+
+    const sText = showShufersal ? `<span class="p-shufersal">${(item.shufersal_total && item.shufersal_total > 0) ? rvMoney(item.shufersal_total) + subBadge(item.shufersal_price_source === 'live-substitute') : '-'}</span>` : '';
+    const rText = showRami ? `<span class="p-rami">${(item.rami_levy_total && item.rami_levy_total > 0) ? rvMoney(item.rami_levy_total) + subBadge(item.rami_price_source === 'live-substitute') : '-'}</span>` : '';
+    const vText = showVictory ? `<span class="p-victory">${(item.victory_total && item.victory_total > 0) ? rvMoney(item.victory_total) + subBadge(item.victory_price_source === 'live-substitute') : '-'}</span>` : '';
+    const mText = showMCK ? `<span class="p-mck">${(item.mck_total && item.mck_total > 0) ? rvMoney(item.mck_total) + subBadge(item.mck_price_source === 'live-substitute') : '-'}</span>` : '';
+
+    const qty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+    const positiveTotals = [
+        showShufersal ? item.shufersal_total : null,
+        showRami ? item.rami_levy_total : null,
+        showVictory ? item.victory_total : null,
+        showMCK ? item.mck_total : null
+    ].filter(v => v != null && Number(v) > 0).map(Number);
+    const minUnitPrice = positiveTotals.length ? Math.min(...positiveTotals) / qty : 0;
+    const unitPriceStr = minUnitPrice > 0 ? _rvFormatUnitPrice(minUnitPrice, item.name, item.unit_qty, item.unit_type) : '';
+    const unitPriceHtml = unitPriceStr ? `<span class="unit-price-hint num">${_rvEsc(unitPriceStr)}</span>` : '';
+
+    const aiBtnHtml = renderAiFeedbackBtn(item, isReplaced);
+
+    let subDetailHtml = '';
+    if (isReplaced) {
+        const parts = [];
+        if (item.shufersal_price_source === 'live-substitute' && item.shufersal_sub_name) parts.push(`שופרסל: הוחלף ב-${_rvEsc(item.shufersal_sub_name)}`);
+        if (item.rami_price_source === 'live-substitute' && item.rami_sub_name) parts.push(`רמי לוי: הוחלף ב-${_rvEsc(item.rami_sub_name)}`);
+        if (item.victory_price_source === 'live-substitute' && item.victory_sub_name) parts.push(`ויקטורי: הוחלף ב-${_rvEsc(item.victory_sub_name)}`);
+        if (item.mck_price_source === 'live-substitute' && item.mck_sub_name) parts.push(`מחסני השוק: הוחלף ב-${_rvEsc(item.mck_sub_name)}`);
+        if (parts.length > 0) {
+            subDetailHtml = `<div class="product-sub-info">${parts.join(' | ')}</div>`;
+        }
+    }
+
+    const metaParts = [unitPriceHtml, aiBtnHtml].filter(Boolean).join('');
+    const metaRow = metaParts ? `<div class="product-meta">${metaParts}</div>` : '';
+
+    return `<div class="product-item product-item-col">` +
+        `<div class="product-item-main">` +
+        `<span class="product-name">${_rvEsc(item.name)} x${_rvEsc(item.quantity)}</span>` +
+        `<div class="product-prices">${sText}${rText}${vText}${mText}</div>` +
+        `</div>${metaRow}${subDetailHtml}</div>`;
 }
 
 const RV_NAMES = { shufersal: 'שופרסל', ramiLevy: 'רמי לוי', victory: 'ויקטורי', machsaneiHashuk: 'מחסני השוק' };
@@ -107,4 +183,14 @@ function renderHistory(list) {
         (list.length ? `<button type="button" class="mini" id="historyClear">מחיקת כל הסלים</button>` : '') + `</div></div>`;
 }
 
-if (typeof module !== 'undefined') module.exports = { renderStoreSummary, addToHistory, renderHistory, rvCompareTotal, rvShownTotal };
+if (typeof module !== 'undefined') {
+    module.exports = {
+        renderStoreSummary,
+        renderOutlierDeals,
+        renderDetailsItem,
+        addToHistory,
+        renderHistory,
+        rvCompareTotal,
+        rvShownTotal
+    };
+}
